@@ -19,7 +19,11 @@
 | M2-T2 | M2 | Alembic Migrations | COMPLETE | `alembic upgrade head` | Version `a229466e8dae` applied successfully to Postgres 16 |
 | M2-T3 | M2 | Repository & Service Layer | COMPLETE | Async CRUD services | ProjectService, TaskService, WorkflowService, ApprovalService, ArtifactService, UsageService |
 | M2-T4 | M2 | Domain REST API Endpoints & Tests | COMPLETE | 6 tests passed, Ruff clean | Full CRUD endpoints under `/api/v1/` tested |
-| M3-T1 | M3 | Provider Abstraction (`BaseProvider`) | NOT STARTED | - | - |
-| M3-T2 | M3 | Claude Code CLI Adapter (Haiku 5.5) | NOT STARTED | - | - |
-| M3-T3 | M3 | Process Execution, Timeouts & Safety | NOT STARTED | - | - |
-| M3-T4 | M3 | Token & Execution Duration Tracking | NOT STARTED | - | - |
+| M3-T1 | M3 | Provider Abstraction (`BaseProvider`) | COMPLETE | Abstract interface & schemas | `ProviderRequest`, `ProviderResponse`, `BaseProvider` |
+| M3-T2 | M3 | Claude Code CLI Adapter (Haiku 5.5) | COMPLETE | Live invocation verified | Canonical `claude-haiku-5-5`, `--output-format json` |
+| M3-T3 | M3 | Process Execution, Timeouts & Safety | COMPLETE | Subprocess array & secret redaction | `asyncio.create_subprocess_exec`, credential redaction |
+| M3-T4 | M3 | Token & Execution Duration Tracking | COMPLETE | Parsed from CLI JSON response | Accurate token, cache, duration and cost tracking |
+| M4-T1 | M4 | Structured Planning Schema & Generator | NOT STARTED | - | - |
+| M4-T2 | M4 | LangGraph Workflow Definition & State Graph | NOT STARTED | - | - |
+| M4-T3 | M4 | PostgreSQL State Checkpointing | NOT STARTED | - | - |
+| M4-T4 | M4 | Dependency Resolution & Task Dispatcher | NOT STARTED | - | - |

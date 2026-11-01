@@ -60,3 +60,22 @@
   6. Verified through automated tests (`tests/test_domain_api.py`) and Ruff linting (all checks passed, 6/6 tests passing).
 - **Status:** VERIFIED
 - **Next Task:** M3: Provider Integrations (Claude Code CLI Haiku 5.5 Adapter).
+
+## [2026-11-01] M3: Provider Integrations Complete
+- **Task ID:** M3-T1 to M3-T4
+- **Milestone:** M3
+- **Executor:** Antigravity / Gemini Planner
+- **Model:** Gemini 3.8 Flash
+- **Actions Taken:**
+  1. Defined `BaseProvider`, `ProviderRequest`, and `ProviderResponse` with structured Pydantic v2 schemas.
+  2. Implemented `ClaudeCodeCLIProvider` utilizing `claude --model haiku -p --output-format json` with:
+     - Subprocess argument array execution (`asyncio.create_subprocess_exec`, `shell=False`).
+     - Secret redaction for API keys and GitHub tokens (`gho_`, `sk-`, `Bearer`).
+     - Path resolution, directory creation, clean environment variable isolation.
+     - Timeout handling with safe process termination (`proc.kill()`, `proc.wait()`).
+     - JSON output parsing for tokens (input, output, cache read/creation), session ID, duration, and cost calculation.
+  3. Created `ProviderFactory` singleton pattern.
+  4. Tested with unit tests (`tests/test_providers.py`) and live non-destructive invocation.
+  5. Live execution verified: Exit code 0, canonical model `claude-haiku-5-5`, tokens: 4 in / 288 out, duration: 6763ms, cost: $0.00366.
+- **Status:** VERIFIED
+- **Next Task:** M4: Orchestration Engine (Structured Planning, LangGraph Workflow, Checkpointing).
