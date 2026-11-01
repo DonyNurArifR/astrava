@@ -23,16 +23,6 @@ export const ArtifactsPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    api.getProjects().then(projs => {
-      setProjects(projs);
-      loadAllArtifacts(projs);
-    }).catch(err => {
-      setError(err.message);
-      setLoading(false);
-    });
-  }, []);
-
   const loadAllArtifacts = async (projs: Project[]) => {
     setLoading(true);
     try {
@@ -48,6 +38,16 @@ export const ArtifactsPage: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    api.getProjects().then(projs => {
+      setProjects(projs);
+      loadAllArtifacts(projs);
+    }).catch(err => {
+      setError(err.message);
+      setLoading(false);
+    });
+  }, []);
 
   const handlePreview = async (artifact: Artifact) => {
     try {

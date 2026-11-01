@@ -20,6 +20,23 @@ class ArtifactService:
         return target_path
 
     @staticmethod
+    async def get_by_execution_and_path(
+        db: AsyncSession, execution_id: uuid.UUID, file_path: str
+    ) -> Artifact | None:
+        """Finds existing artifact by execution_id and file_path."""
+        safe_rel_path = str(
+            ArtifactService.sanitize_path(file_path).relative_to(
+                settings.ARTIFACT_STORAGE_PATH.resolve()
+            )
+        )
+        stmt = select(Artifact).where(
+            Artifact.execution_id == execution_id,
+            Artifact.file_path == safe_rel_path,
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def register_artifact(
         db: AsyncSession,
         data: ArtifactCreate,
@@ -39,12 +56,27 @@ class ArtifactService:
         elif safe_path.exists():
             size_bytes = safe_path.stat().st_size
 
+        rel_path = str(safe_path.relative_to(settings.ARTIFACT_STORAGE_PATH.resolve()))
+
+        # Deduplication check: if artifact exists for execution and path, update and return it
+        if data.execution_id:
+            existing = await ArtifactService.get_by_execution_and_path(
+                db, data.execution_id, data.file_path
+            )
+            if existing:
+                existing.file_size_bytes = size_bytes
+                existing.name = data.name
+                existing.metadata_json = data.metadata_json
+                await db.flush()
+                await db.refresh(existing)
+                return existing
+
         artifact = Artifact(
             project_id=data.project_id,
             execution_id=data.execution_id,
             task_id=data.task_id,
             name=data.name,
-            file_path=str(safe_path.relative_to(settings.ARTIFACT_STORAGE_PATH.resolve())),
+            file_path=rel_path,
             artifact_type=data.artifact_type,
             mime_type=data.mime_type,
             file_size_bytes=size_bytes,

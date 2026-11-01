@@ -118,3 +118,49 @@
   6. Generated complete technical documentation: `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `PROGRESS.md`, `EXECUTION_LOG.md`, `API.md`, and `PROVIDERS.md`.
 - **Status:** COMPLETE & DELIVERED
 - **Final Result:** ASTRAVA V1 is fully functional, tested, locally deployable, and ready.
+
+---
+
+## 2026-11-01: ASTRAVA V1.1 — Independent Audit, Reliability & Security Hardening
+
+### Phase 0: Independent Baseline Verification
+- Verified Git remote (`git@github.com:DonyNurArifR/astrava.git`), branch `main`, author identity (`Abstract <61998277+DonyNurArifR@users.noreply.github.com>`).
+- Verified Claude CLI (`2.1.316`) invocation resolves to canonical model `claude-haiku-5-5`.
+- Verified PostgreSQL 16 Alpine container active on port `5433`.
+- Discovered 7 prioritized findings documented in `docs/V1_1_AUDIT.md`:
+  - F-01 (Critical): Duplicate task, artifact, and telemetry creation upon pipeline resumption.
+  - F-02 (High): Unbounded subprocess concurrency.
+  - F-03 (High): Incomplete secret redaction patterns.
+  - F-04 (High): Subprocess leak risk and orphaned child process tree on timeout/exit.
+  - F-05 (Medium): Missing input boundaries on API objectives and project models.
+  - F-06 (Medium): Missing automated frontend test runner.
+  - F-07 (Low): 8 Oxlint hook and Fast Refresh warnings.
+
+### Phase 1: Implementation of Hardening Measures
+1. **Relational Data Integrity (F-01):**
+   - Added task DB ID tracking in `OrchestrationState` and project-level title matching in `_sync_state_to_db`.
+   - Enhanced `ArtifactService.register_artifact` with duplicate prevention by execution ID and relative path.
+   - Sliced telemetry synchronization with `synced_usage_count` offset.
+2. **Concurrency Semaphore (F-02):**
+   - Enforced `asyncio.Semaphore(settings.MAX_CONCURRENT_EXECUTIONS)` across `start_pipeline` and `resume_pipeline`.
+3. **Secret Redaction & Subprocess Safety (F-03, F-04):**
+   - Added regex coverage for Anthropic API keys (`sk-ant-...`), GitHub PATs (`github_pat_...`), AWS keys (`AKIA...`), database connection passwords (`postgres://...:...@`), and private keys.
+   - Configured `start_new_session=True` on subprocess launch; added `os.killpg` on timeout.
+   - Created `terminate_all_active_processes()` and integrated into FastAPI `lifespan` shutdown handler.
+   - Extracted `canonicalModel` from CLI JSON `modelUsage` and propagated to `ProviderResponse`.
+4. **Pydantic v2 Input Boundaries (F-05):**
+   - Added bounded string length validators and whitespace stripping on `PlanRequest`, `ExecutePipelineRequest`, `ProjectCreate`, `ProjectUpdate`, `TaskCreate`, `TaskUpdate`, and `ApprovalDecisionRequest`.
+5. **Frontend Testing & Linter Hygiene (F-06, F-07):**
+   - Installed Vitest, `@testing-library/react`, `@testing-library/jest-dom`, and `jsdom`.
+   - Created 4 test suites: `ThemeContext.test.tsx`, `Sidebar.test.tsx`, `CommandCenter.test.tsx`, `App.test.tsx`.
+   - Refactored `useTheme` into separate file, isolated context definition for Fast Refresh, wrapped data fetchers in `useCallback`.
+   - Achieved 0 Oxlint warnings across 24 frontend files.
+
+### Phase 2: Acceptance & Regression Verification
+- **Backend Tests:** 20/20 passed in 1.42s.
+- **Backend Linting:** Ruff clean, 54 files formatted.
+- **Frontend Tests:** 4/4 passed in 542ms.
+- **Frontend Build:** `tsc -b && vite build` completed in 94ms.
+- **Live Haiku CLI:** Successfully invoked and verified `canonicalModel: claude-haiku-5-5`.
+- **Database Durability:** `test_pipeline_state_recovery_across_engine_restart` verified checkpoint survival across engine connection pool disposal.
+- **Final Result:** ASTRAVA V1.1 is fully audited, hardened, verified, and ready for release.

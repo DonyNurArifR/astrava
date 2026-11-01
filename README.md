@@ -123,7 +123,9 @@ astrava/
 │   ├── PROGRESS.md             # Task completion matrix
 │   ├── EXECUTION_LOG.md        # Persistent development journal
 │   ├── API.md                  # REST API reference
-│   └── PROVIDERS.md            # CLI provider protocols & security
+│   ├── PROVIDERS.md            # CLI provider protocols & security
+│   ├── V1_1_AUDIT.md           # Independent baseline & security audit
+│   └── V1_1_RELEASE_REPORT.md  # V1.1 Release & hardening verification
 ├── backend/
 │   ├── alembic/                # Relational database migrations
 │   ├── app/
@@ -135,12 +137,13 @@ astrava/
 │   │   ├── schemas/            # Pydantic v2 schemas
 │   │   ├── services/           # Async domain service layer
 │   │   └── verification/       # Deterministic verification runner
-│   └── tests/                  # Pytest test suite (16 tests, 100% passing)
+│   └── tests/                  # Pytest test suite (20 tests, 100% passing)
 ├── frontend/
 │   ├── src/
+│   │   ├── __tests__/          # Vitest & Testing Library automated tests (4 test suites)
 │   │   ├── api/                # API client connected to backend
 │   │   ├── components/         # Logo, Sidebar, Header, Modals
-│   │   ├── context/            # Light/Dark Theme Context
+│   │   ├── context/            # Light/Dark Theme Context & hook
 │   │   ├── pages/              # Overview, Command Center, Projects, Executions, Artifacts, Approvals, Intelligence, Settings
 │   │   └── types/              # TypeScript interface definitions
 └── storage/
@@ -151,7 +154,10 @@ astrava/
 
 ## Verification & Quality Assurance
 
-- **Backend Tests:** `uv run pytest` -> 16 passing tests across domain APIs, orchestrator graphs, provider adapters, and resilience boundaries.
-- **Backend Linting:** `uv run ruff check .` -> Zero lint errors.
+- **Backend Tests:** `uv run pytest` -> 20 passing tests across domain APIs, orchestrator graphs, provider adapters, input validation boundaries, and crash recovery.
+- **Backend Linting:** `uv run ruff check .` -> Zero lint errors; 54 files formatted.
+- **Frontend Tests:** `npm test` -> 4 automated test suites (ThemeContext, Sidebar, CommandCenter, App) running on Vitest + React Testing Library.
+- **Frontend Linter:** `npm run lint` -> 0 warnings and 0 errors via Oxlint across 24 files.
 - **Frontend Build:** `npm run build` -> Clean TypeScript compilation and Vite production build in < 100ms.
 - **Live Provider Proof:** Validated against live Claude Code CLI with `claude-haiku-5-5` resolving exit code 0, duration, and token usage metrics.
+- **Reliability Audit:** Zero duplicate entities on pipeline resumption; unbounded concurrency eliminated; process group cleanup on shutdown.

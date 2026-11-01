@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -18,8 +18,7 @@ export const ApprovalsPage: React.FC = () => {
   const [reason, setReason] = useState<{ [id: string]: string }>({});
   const [error, setError] = useState<string | null>(null);
 
-  const loadApprovals = () => {
-    setLoading(true);
+  const loadApprovals = useCallback(() => {
     api
       .getApprovals(false)
       .then(data => {
@@ -30,11 +29,11 @@ export const ApprovalsPage: React.FC = () => {
         setError(err.message);
         setLoading(false);
       });
-  };
+  }, []);
 
   useEffect(() => {
     loadApprovals();
-  }, []);
+  }, [loadApprovals]);
 
   const handleDecision = async (id: string, decision: 'approved' | 'rejected') => {
     setDecidingId(id);

@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import time
 
 from app.config import settings
@@ -17,17 +18,48 @@ from app.providers.base import (
 logger = logging.getLogger("astrava.providers.claude_code")
 
 SECRET_PATTERNS = [
+    re.compile(r"github_pat_[A-Za-z0-9_]{36,}"),
     re.compile(r"gho_[A-Za-z0-9_]{36,}"),
     re.compile(r"ghp_[A-Za-z0-9_]{36,}"),
+    re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"),
     re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"(Bearer\s+)[A-Za-z0-9_.-]{20,}", re.IGNORECASE),
+    re.compile(
+        r"-----BEGIN (?:RSA |EC )?PRIVATE KEY-----[^-]+-----END (?:RSA |EC )?PRIVATE KEY-----",
+        re.DOTALL,
+    ),
 ]
+POSTGRES_URI_PATTERN = re.compile(r"(postgres(?:ql)?:\/\/[^:]+:)([^@]+)(@)", re.IGNORECASE)
+
+_active_processes: set[asyncio.subprocess.Process] = set()
+
+
+def terminate_all_active_processes() -> int:
+    """Terminates all currently registered provider child processes and process groups."""
+    terminated_count = 0
+    for proc in list(_active_processes):
+        try:
+            if proc.returncode is None:
+                try:
+                    if hasattr(os, "killpg") and proc.pid:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    else:
+                        proc.kill()
+                except Exception:
+                    proc.kill()
+                terminated_count += 1
+        except Exception as e:
+            logger.warning("Error terminating process %s: %s", getattr(proc, "pid", None), e)
+    _active_processes.clear()
+    return terminated_count
 
 
 def redact_secrets(text: str) -> str:
     redacted = text
     for pattern in SECRET_PATTERNS:
         redacted = pattern.sub(r"[REDACTED_CREDENTIAL]", redacted)
+    redacted = POSTGRES_URI_PATTERN.sub(r"\1[REDACTED_PASSWORD]\3", redacted)
     return redacted
 
 
@@ -101,30 +133,42 @@ class ClaudeCodeCLIProvider(BaseProvider):
         )
 
         try:
+            # Spawn in a separate process group on POSIX systems to allow full tree termination
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=str(work_dir),
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
             )
+            _active_processes.add(proc)
 
             try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=request.timeout_seconds,
-                )
-            except TimeoutError:
-                proc.kill()
-                await proc.wait()
-                duration_ms = int((time.monotonic() - start_time) * 1000)
-                logger.warning("Claude CLI timed out after %s seconds", request.timeout_seconds)
-                return ProviderResponse(
-                    status=ProviderStatus.TIMEOUT,
-                    exit_code=-1,
-                    duration_ms=duration_ms,
-                    error_message=f"Process timed out after {request.timeout_seconds}s",
-                )
+                try:
+                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                        proc.communicate(),
+                        timeout=request.timeout_seconds,
+                    )
+                except TimeoutError:
+                    try:
+                        if hasattr(os, "killpg") and proc.pid:
+                            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                        else:
+                            proc.kill()
+                    except Exception:
+                        proc.kill()
+                    await proc.wait()
+                    duration_ms = int((time.monotonic() - start_time) * 1000)
+                    logger.warning("Claude CLI timed out after %s seconds", request.timeout_seconds)
+                    return ProviderResponse(
+                        status=ProviderStatus.TIMEOUT,
+                        exit_code=-1,
+                        duration_ms=duration_ms,
+                        error_message=f"Process timed out after {request.timeout_seconds}s",
+                    )
+            finally:
+                _active_processes.discard(proc)
 
             duration_ms = int((time.monotonic() - start_time) * 1000)
             stdout = redact_secrets(stdout_bytes.decode("utf-8", errors="replace"))
@@ -140,6 +184,7 @@ class ClaudeCodeCLIProvider(BaseProvider):
             cache_read_tokens = 0
             cache_creation_tokens = 0
             cost_usd = 0.0
+            canonical_model = None
 
             if stdout.strip():
                 try:
@@ -154,6 +199,14 @@ class ClaudeCodeCLIProvider(BaseProvider):
                     output_tokens = int(usage.get("output_tokens", 0))
                     cache_read_tokens = int(usage.get("cache_read_input_tokens", 0))
                     cache_creation_tokens = int(usage.get("cache_creation_input_tokens", 0))
+
+                    # Extract canonical model attribution if available
+                    model_usage = parsed_data.get("modelUsage", {})
+                    if isinstance(model_usage, dict):
+                        for _, v in model_usage.items():
+                            if isinstance(v, dict) and "canonicalModel" in v:
+                                canonical_model = v["canonicalModel"]
+                                break
 
                     is_error = parsed_data.get("is_error", False)
                     if is_error or exit_code != 0:
@@ -180,6 +233,8 @@ class ClaudeCodeCLIProvider(BaseProvider):
                 cache_creation_tokens=cache_creation_tokens,
                 cost_usd=cost_usd,
                 session_id=session_id,
+                model=request.model,
+                canonical_model=canonical_model,
                 raw_response=parsed_data,
                 error_message=stderr if status == ProviderStatus.FAILED else None,
             )

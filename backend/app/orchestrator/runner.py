@@ -1,9 +1,11 @@
+import asyncio
 import logging
 import uuid
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.approval import ApprovalStatus
 from app.models.artifact import ArtifactType
 from app.models.execution import ExecutionStatus, WorkflowExecution
@@ -24,6 +26,9 @@ from app.services.usage_service import UsageService
 from app.services.workflow_service import WorkflowService
 
 logger = logging.getLogger("astrava.orchestrator.runner")
+
+# Concurrency semaphore enforcing MAX_CONCURRENT_EXECUTIONS
+_execution_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_EXECUTIONS)
 
 
 class OrchestrationRunner:
@@ -80,11 +85,14 @@ class OrchestrationRunner:
             "verification_results": [],
             "artifacts": [],
             "usage_records": [],
+            "task_db_ids": {},
+            "synced_usage_count": 0,
         }
 
-        # 4. Run LangGraph graph
+        # 4. Run LangGraph graph with concurrency semaphore
         graph = build_orchestrator_graph()
-        final_state = await graph.ainvoke(initial_state)
+        async with _execution_semaphore:
+            final_state = await graph.ainvoke(initial_state)
 
         # 5. Synchronize final state back to Database
         await OrchestrationRunner._sync_state_to_db(db, execution.id, project_id, final_state)
@@ -101,6 +109,10 @@ class OrchestrationRunner:
         execution = await WorkflowService.get_execution(db, execution_id)
         if not execution:
             raise ValueError(f"Execution {execution_id} not found")
+
+        # Guard against duplicate resumption if already completed or cancelled
+        if execution.status in [ExecutionStatus.COMPLETED, ExecutionStatus.CANCELLED]:
+            return execution
 
         state: OrchestrationState = dict(execution.state_data)  # type: ignore
 
@@ -147,9 +159,10 @@ class OrchestrationRunner:
             db, execution_id, "pipeline_resumed", {"approved_task": tasks[idx]["title"]}
         )
 
-        # Resume LangGraph execution from approved task
+        # Resume LangGraph execution from approved task with concurrency semaphore
         graph = build_orchestrator_graph()
-        final_state = await graph.ainvoke(state)
+        async with _execution_semaphore:
+            final_state = await graph.ainvoke(state)
 
         await OrchestrationRunner._sync_state_to_db(
             db, execution_id, execution.project_id, final_state
@@ -166,33 +179,61 @@ class OrchestrationRunner:
     ) -> None:
         state_status = state.get("status", "running")
 
-        # Sync tasks to DB
+        # 1. Sync tasks to DB with ID mapping to prevent duplicate task creations
         tasks = state.get("tasks", [])
+        task_db_ids = state.get("task_db_ids", {}) or {}
+        completed_ids = set(state.get("completed_task_ids", []))
+
+        # Re-sync with any existing tasks in DB for this project to guarantee deduplication
+        existing_tasks = await TaskService.list_by_project(db, project_id)
+        existing_by_title = {et.title: str(et.id) for et in existing_tasks}
         for t in tasks:
-            t_obj = await TaskService.create(
-                db,
-                TaskCreate(
-                    project_id=project_id,
-                    title=t.get("title", ""),
-                    description=t.get("description", ""),
-                    executor_type=t.get("executor_type", "claude_code"),
-                    assigned_model=t.get("assigned_model", "claude-haiku-5-5"),
-                    risk_level=t.get("risk_level", "low"),
-                    priority=t.get("priority", 1),
-                    dependency_ids=t.get("dependencies", []),
-                ),
-            )
-            if t.get("task_id") in state.get("completed_task_ids", []):
-                await TaskService.update(
+            task_key = t.get("task_id", "")
+            if task_key and task_key not in task_db_ids and t.get("title") in existing_by_title:
+                task_db_ids[task_key] = existing_by_title[t.get("title")]
+
+        for t in tasks:
+            task_key = t.get("task_id", "")
+            if task_key in task_db_ids:
+                # Task already exists in DB; update status if completed
+                existing_db_id = uuid.UUID(task_db_ids[task_key])
+                if task_key in completed_ids:
+                    await TaskService.update(
+                        db,
+                        existing_db_id,
+                        TaskUpdate(
+                            status=TaskStatus.COMPLETED,
+                            output_data={"result": t.get("output_text", "")},
+                        ),
+                    )
+            else:
+                # Create task in DB and track ID
+                t_obj = await TaskService.create(
                     db,
-                    t_obj.id,
-                    TaskUpdate(
-                        status=TaskStatus.COMPLETED,
-                        output_data={"result": t.get("output_text", "")},
+                    TaskCreate(
+                        project_id=project_id,
+                        title=t.get("title", ""),
+                        description=t.get("description", ""),
+                        executor_type=t.get("executor_type", "claude_code"),
+                        assigned_model=t.get("assigned_model", "claude-haiku-5-5"),
+                        risk_level=t.get("risk_level", "low"),
+                        priority=t.get("priority", 1),
+                        dependency_ids=t.get("dependencies", []),
                     ),
                 )
+                task_db_ids[task_key] = str(t_obj.id)
+                if task_key in completed_ids:
+                    await TaskService.update(
+                        db,
+                        t_obj.id,
+                        TaskUpdate(
+                            status=TaskStatus.COMPLETED,
+                            output_data={"result": t.get("output_text", "")},
+                        ),
+                    )
+        state["task_db_ids"] = task_db_ids
 
-        # Sync artifacts to DB
+        # 2. Sync artifacts to DB (register_artifact handles deduplication)
         for art in state.get("artifacts", []):
             try:
                 await ArtifactService.register_artifact(
@@ -210,8 +251,11 @@ class OrchestrationRunner:
             except Exception as e:
                 logger.warning("Could not sync artifact %s: %s", art, e)
 
-        # Sync usage records to DB
-        for usage in state.get("usage_records", []):
+        # 3. Sync usage records to DB using slice offset to prevent duplicate inserts
+        synced_usage_count = state.get("synced_usage_count", 0)
+        usage_records = state.get("usage_records", [])
+
+        for usage in usage_records[synced_usage_count:]:
             try:
                 await UsageService.record_execution(
                     db,
@@ -233,6 +277,8 @@ class OrchestrationRunner:
                 )
             except Exception as e:
                 logger.warning("Could not sync usage record %s: %s", usage, e)
+
+        state["synced_usage_count"] = len(usage_records)
 
         # Handle pause for approval if waiting
         current_step = state.get("current_task_index", 0)

@@ -37,3 +37,13 @@
 | M8-T1 | M8 | Studio Templates & Workflow Customization | COMPLETE | SaaS & Media studio workflows | PRD/Architecture/QA vs Strategy/Script/Publishing |
 | M9-T1 | M9 | Full End-to-End Proof & Failure Testing | COMPLETE | 16 tests passing, zero errors | Complete lifecycle & security boundaries verified |
 | M10-T1 | M10 | Complete Technical Documentation | COMPLETE | Comprehensive guides | README, ARCHITECTURE, API, PROVIDERS, ROADMAP, PROGRESS |
+| V1.1-A1 | V1.1 | Phase 0 Independent Baseline Audit | COMPLETE | `docs/V1_1_AUDIT.md` | 7 prioritized findings documented (1 Critical, 3 High, 2 Medium, 1 Low) |
+| V1.1-F1 | V1.1 | Fix Resumption Duplicate Task/Artifact/Usage Creation | COMPLETE | `test_resume_idempotency_and_no_duplicate_records` | Task DB ID map, DB title lookup, artifact deduplication, usage slicing |
+| V1.1-F2 | V1.1 | Subprocess Concurrency Semaphore Enforcement | COMPLETE | Runner concurrency guard | `asyncio.Semaphore(settings.MAX_CONCURRENT_EXECUTIONS)` bound |
+| V1.1-F3 | V1.1 | Subprocess Secret Redaction & Canonical Model Attribution | COMPLETE | `test_secret_redaction` | Anthropic keys, GitHub PATs, AWS keys, DB passwords, RSA keys redacted |
+| V1.1-F4 | V1.1 | Process Group Termination & Server Shutdown Cleanup | COMPLETE | `test_terminate_active_processes` | `start_new_session=True`, `os.killpg`, FastAPI lifespan cleanup |
+| V1.1-F5 | V1.1 | Bounded Pydantic v2 String & Whitespace Validation | COMPLETE | `test_input_validation_boundaries` | Rejects blank or unbounded objectives, names, titles with 422 |
+| V1.1-F6 | V1.1 | Frontend Vitest Test Runner & Core Test Suites | COMPLETE | `npm test` (4 passed) | Vitest + Testing Library + jsdom; ThemeContext, Sidebar, CommandCenter, App |
+| V1.1-F7 | V1.1 | Elimination of Frontend Oxlint Warnings | COMPLETE | `npm run lint` (0 warnings, 0 errors) | Fast Refresh context separation, useTheme hook file, useCallback fetchers |
+| V1.1-E1 | V1.1 | Engine Restart State Persistence & Recovery Test | COMPLETE | `test_pipeline_state_recovery_across_engine_restart` | Checkpoint persistence verified across DB connection pool reboot |
+| V1.1-R1 | V1.1 | V1.1 Release Delivery Report & Synchronized Push | COMPLETE | `docs/V1_1_RELEASE_REPORT.md` | Verified release report, clean git tree, pushed to origin/main |

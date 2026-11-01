@@ -92,7 +92,7 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
     usage_record = {
         "task_id": current_task["task_id"],
         "provider": "claude_code",
-        "model": current_task.get("assigned_model", "claude-haiku-5-5"),
+        "model": resp.canonical_model or current_task.get("assigned_model", "claude-haiku-5-5"),
         "duration_ms": resp.duration_ms,
         "input_tokens": resp.input_tokens,
         "output_tokens": resp.output_tokens,

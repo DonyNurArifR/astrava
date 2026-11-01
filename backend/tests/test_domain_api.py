@@ -102,3 +102,37 @@ async def test_artifact_registration_and_retrieval():
         list_art = await client.get(f"/api/v1/artifacts/project/{project_id}")
         assert list_art.status_code == 200
         assert len(list_art.json()) >= 1
+
+
+@pytest.mark.asyncio
+async def test_input_validation_boundaries():
+    """Verify that schemas enforce string boundaries and reject invalid/blank inputs with 422."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # 1. Blank project name
+        res = await client.post("/api/v1/projects", json={"name": "   ", "studio_type": "saas"})
+        assert res.status_code == 422
+
+        # 2. Project name too short
+        res = await client.post("/api/v1/projects", json={"name": "a", "studio_type": "saas"})
+        assert res.status_code == 422
+
+        # 3. Valid project
+        res = await client.post(
+            "/api/v1/projects", json={"name": "Valid Project", "studio_type": "saas"}
+        )
+        assert res.status_code == 201
+        proj_id = res.json()["id"]
+
+        # 4. Blank task title
+        res = await client.post(
+            "/api/v1/tasks",
+            json={"project_id": proj_id, "title": "  "},
+        )
+        assert res.status_code == 422
+
+        # 5. Empty/blank orchestrator objective
+        res = await client.post(
+            "/api/v1/orchestrator/plan",
+            json={"project_id": proj_id, "objective": "   ", "studio_type": "saas"},
+        )
+        assert res.status_code == 422

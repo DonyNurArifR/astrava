@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Terminal,
   Sparkles,
@@ -26,18 +26,16 @@ export const CommandCenterPage: React.FC = () => {
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
 
-  const loadProjects = () => {
+  const loadProjects = useCallback(() => {
     api.getProjects().then(data => {
       setProjects(data);
-      if (data.length > 0 && !selectedProjectId) {
-        setSelectedProjectId(data[0].id);
-      }
+      setSelectedProjectId(prev => (prev || (data.length > 0 ? data[0].id : '')));
     }).catch(err => setError(err.message));
-  };
+  }, []);
 
   useEffect(() => {
     loadProjects();
-  }, []);
+  }, [loadProjects]);
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();

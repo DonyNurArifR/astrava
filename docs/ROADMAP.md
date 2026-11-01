@@ -1,7 +1,7 @@
 # ASTRAVA Development Roadmap
-**Version:** 1.0.0
-**Product:** ASTRAVA — AI Creation and Orchestration Platform ("From vision to execution.")
-**Overall Status:** COMPLETE & DELIVERED
+**Version:** 1.1.0  
+**Product:** ASTRAVA — AI Creation and Orchestration Platform ("From vision to execution.")  
+**Overall Status:** V1.1 AUDITED, HARDENED & DELIVERED
 
 ---
 
@@ -20,3 +20,4 @@
 | **M8** | SaaS & Media Studios | **COMPLETE** | Dedicated Studio pipelines for SaaS (PRD, Architecture, Implementation, QA) and Media (Content strategy, Scriptwriting, Publishing prep). |
 | **M9** | End-to-End Integration & Proof | **COMPLETE** | Complete lifecycle test passing, resilience against path traversal attacks, rejection handling, and state preservation. |
 | **M10** | Documentation & Delivery | **COMPLETE** | Comprehensive README, ARCHITECTURE, ROADMAP, PROGRESS, EXECUTION_LOG, API reference, PROVIDER docs. |
+| **V1.1** | Independent Audit, Reliability & Security Hardening | **COMPLETE** | Resolved all 7 audit findings: resumption data deduplication, concurrency bound, expanded credential redaction, process group termination, Pydantic input boundaries, Vitest test suite, Oxlint cleanup, DB restart durability. |

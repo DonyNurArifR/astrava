@@ -15,6 +15,7 @@ from app.api.v1.tasks import router as tasks_router
 from app.api.v1.workflows import router as workflows_router
 from app.config import settings
 from app.logging_config import setup_logging
+from app.providers.claude_code import terminate_all_active_processes
 
 setup_logging(debug=settings.DEBUG)
 logger = logging.getLogger("astrava")
@@ -27,13 +28,16 @@ async def lifespan(app: FastAPI):
     settings.ARTIFACT_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
     logger.info("Artifact storage verified at: %s", settings.ARTIFACT_STORAGE_PATH)
     yield
-    logger.info("Shutting down %s backend...", settings.APP_NAME)
+    logger.info("Shutting down %s backend and terminating active processes...", settings.APP_NAME)
+    terminated = terminate_all_active_processes()
+    if terminated:
+        logger.info("Terminated %d active provider child process(es).", terminated)
 
 
 app = FastAPI(
     title=settings.APP_NAME,
     description="ASTRAVA: AI Creation and Orchestration Platform — From vision to execution.",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",

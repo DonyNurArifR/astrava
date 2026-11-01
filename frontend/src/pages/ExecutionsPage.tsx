@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   PlayCircle,
   Pause,
@@ -16,29 +16,25 @@ export const ExecutionsPage: React.FC = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadExecutions = () => {
-    setLoading(true);
+  const loadExecutions = useCallback(() => {
     api
       .getExecutions()
       .then(data => {
         setExecutions(data);
-        if (selectedExecution) {
-          const updated = data.find(e => e.id === selectedExecution.id);
-          if (updated) setSelectedExecution(updated);
-        }
+        setSelectedExecution(prev => (prev ? data.find(e => e.id === prev.id) || prev : null));
         setLoading(false);
       })
       .catch(err => {
         setError(err.message);
         setLoading(false);
       });
-  };
+  }, []);
 
   useEffect(() => {
     loadExecutions();
     const interval = setInterval(loadExecutions, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [loadExecutions]);
 
   const handlePause = async (id: string) => {
     setActionLoading(true);

@@ -13,7 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { Logo } from './Logo';
-import { useTheme } from '../context/ThemeContext';
+import { useTheme } from '../context/useTheme';
 
 export type NavItemKey =
   | 'overview'

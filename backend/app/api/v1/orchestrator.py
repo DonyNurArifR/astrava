@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -17,14 +17,40 @@ router = APIRouter(prefix="/orchestrator", tags=["Orchestrator"])
 
 class PlanRequest(BaseModel):
     project_id: uuid.UUID
-    objective: str
+    objective: str = Field(
+        ...,
+        min_length=3,
+        max_length=5000,
+        description="Target goal or requirements for the autonomous plan",
+    )
     studio_type: StudioType = StudioType.SAAS
+
+    @field_validator("objective")
+    @classmethod
+    def validate_objective(cls, v: str) -> str:
+        stripped = v.strip()
+        if len(stripped) < 3:
+            raise ValueError("Objective must contain at least 3 non-whitespace characters")
+        return stripped
 
 
 class ExecutePipelineRequest(BaseModel):
     project_id: uuid.UUID
-    objective: str
+    objective: str = Field(
+        ...,
+        min_length=3,
+        max_length=5000,
+        description="Target goal or requirements for autonomous pipeline execution",
+    )
     studio_type: StudioType = StudioType.SAAS
+
+    @field_validator("objective")
+    @classmethod
+    def validate_objective(cls, v: str) -> str:
+        stripped = v.strip()
+        if len(stripped) < 3:
+            raise ValueError("Objective must contain at least 3 non-whitespace characters")
+        return stripped
 
 
 @router.post("/plan", response_model=StructuredPlan)

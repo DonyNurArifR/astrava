@@ -2,17 +2,27 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.project import ProjectStatus, StudioType
 
 
 class ProjectBase(BaseModel):
-    name: str
-    description: str | None = None
+    name: str = Field(..., min_length=2, max_length=200, description="Project display name")
+    description: str | None = Field(
+        None, max_length=2000, description="Project summary description"
+    )
     studio_type: StudioType = StudioType.SAAS
     target_objectives: list[str] = []
     settings_json: dict[str, Any] = {}
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        stripped = v.strip()
+        if len(stripped) < 2:
+            raise ValueError("Project name must contain at least 2 non-whitespace characters")
+        return stripped
 
 
 class ProjectCreate(ProjectBase):
@@ -20,11 +30,21 @@ class ProjectCreate(ProjectBase):
 
 
 class ProjectUpdate(BaseModel):
-    name: str | None = None
-    description: str | None = None
+    name: str | None = Field(None, min_length=2, max_length=200)
+    description: str | None = Field(None, max_length=2000)
     status: ProjectStatus | None = None
     target_objectives: list[str] | None = None
     settings_json: dict[str, Any] | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str | None) -> str | None:
+        if v is not None:
+            stripped = v.strip()
+            if len(stripped) < 2:
+                raise ValueError("Project name must contain at least 2 non-whitespace characters")
+            return stripped
+        return v
 
 
 class ProjectRead(ProjectBase):

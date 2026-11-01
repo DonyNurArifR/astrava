@@ -16,4 +16,6 @@ class OrchestrationState(TypedDict, total=False):
     verification_results: list[dict[str, Any]]
     artifacts: list[dict[str, Any]]
     usage_records: list[dict[str, Any]]
+    task_db_ids: dict[str, str]
+    synced_usage_count: int
     error: str | None

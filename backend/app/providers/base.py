@@ -34,6 +34,8 @@ class ProviderResponse(BaseModel):
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     cost_usd: float = 0.0
+    model: str | None = None
+    canonical_model: str | None = None
     session_id: str | None = None
     raw_response: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None

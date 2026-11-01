@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   FolderKanban,
   Plus,
@@ -22,10 +22,9 @@ export const ProjectsPage: React.FC = () => {
   const [objectives, setObjectives] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const loadProjects = () => {
-    setLoading(true);
+  const loadProjects = useCallback((filter: string = filterStudio) => {
     api
-      .getProjects(filterStudio === 'all' ? undefined : filterStudio)
+      .getProjects(filter === 'all' ? undefined : filter)
       .then(data => {
         setProjects(data);
         setLoading(false);
@@ -34,11 +33,11 @@ export const ProjectsPage: React.FC = () => {
         setError(err.message);
         setLoading(false);
       });
-  };
+  }, [filterStudio]);
 
   useEffect(() => {
-    loadProjects();
-  }, [filterStudio]);
+    loadProjects(filterStudio);
+  }, [filterStudio, loadProjects]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
