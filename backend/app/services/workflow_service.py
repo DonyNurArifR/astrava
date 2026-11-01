@@ -106,12 +106,15 @@ class WorkflowService:
         error_message: str | None = None,
         state_data: dict[str, Any] | None = None,
         checkpoint_id: str | None = None,
+        current_step: int | None = None,
     ) -> WorkflowExecution | None:
         execution = await WorkflowService.get_execution(db, execution_id)
         if not execution:
             return None
 
         execution.status = status
+        if current_step is not None:
+            execution.current_step = current_step
         if status == ExecutionStatus.RUNNING and not execution.started_at:
             execution.started_at = datetime.now(UTC)
         elif status in [

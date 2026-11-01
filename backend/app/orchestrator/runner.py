@@ -235,6 +235,7 @@ class OrchestrationRunner:
                 logger.warning("Could not sync usage record %s: %s", usage, e)
 
         # Handle pause for approval if waiting
+        current_step = state.get("current_task_index", 0)
         if state_status == "waiting_approval":
             active_task_id = state.get("active_approval_id")
             current_idx = state.get("current_task_index", 0)
@@ -252,6 +253,7 @@ class OrchestrationRunner:
                 execution_id,
                 ExecutionStatus.WAITING_APPROVAL,
                 state_data=state,
+                current_step=current_step,
             )
             await WorkflowService.record_event(
                 db,
@@ -265,6 +267,7 @@ class OrchestrationRunner:
                 execution_id,
                 ExecutionStatus.COMPLETED,
                 state_data=state,
+                current_step=current_step,
             )
             await WorkflowService.record_event(
                 db, execution_id, "pipeline_completed", {"tasks_count": len(tasks)}
@@ -275,4 +278,5 @@ class OrchestrationRunner:
                 execution_id,
                 ExecutionStatus.RUNNING,
                 state_data=state,
+                current_step=current_step,
             )
