@@ -325,3 +325,32 @@
   - LangGraph pre-execution retrieval and post-execution memory ingestion nodes.
   - Interactive Project Intelligence frontend experience.
 - Formulated 8 verifiable implementation milestones (M1.3-1 to M1.3-8).
+
+### Milestone M1.3-2: Database Models & Alembic Migration
+- **Model Implementations:**
+  - `backend/app/models/memory.py`:
+    - `ProjectMemory`: 10 memory categories (`MemoryCategory`), 4 provenance types (`MemoryProvenanceType`: `user_provided`, `verified_finding`, `agent_conclusion`, `assumption`), status (`MemoryStatus`: `proposed`, `active`, `superseded`, `rejected`, `archived`), conflict status (`MemoryConflictStatus`: `none`, `detected`, `resolved`).
+    - Database check constraints: `ck_project_memories_confidence_range` (0.0 to 1.0), `ck_project_memories_revision_positive` (revision >= 1), `ck_project_memories_no_self_revision` (prev_id != id), `ck_project_memories_no_self_conflict` (conflict_id != id).
+    - `MemoryAuditLog`: append-only audit trail capturing memory mutations (`MemoryAuditAction`), actor types, actor IDs, previous/new states, reason, and timestamps.
+  - `backend/app/models/artifact.py`:
+    - Added lineage and versioning columns: `version` (int, default 1), `parent_artifact_id` (UUID foreign key), `superseded_by_id` (UUID foreign key), `verification_status` (`ArtifactVerificationStatus`: `unverified`, `verified`, `failed`), `verification_details` (JSON).
+    - Added check constraints: `ck_artifacts_no_self_parent`, `ck_artifacts_no_self_supersede`, `ck_artifacts_version_positive`.
+  - `backend/app/models/__init__.py`:
+    - Cleanly re-exported all new models and enums.
+- **Alembic Migration:**
+  - Created migration `f8d6aac5883a_add_persistent_project_memory_and_.py` chained from `6b136f812cca`.
+  - Added explicit foreign key names (`fk_artifacts_superseded_by_id`, `fk_artifacts_parent_artifact_id`) and check constraints for safe two-way migration.
+  - Tested `alembic upgrade head` on live PostgreSQL 16 (port 5433).
+  - Tested `alembic downgrade 6b136f812cca` and re-upgrade to `f8d6aac5883a` with zero errors.
+- **Verification & Test Harness:**
+  - Created `backend/tests/test_memory_models.py` with 7 dedicated integration tests covering:
+    - 4 provenance types and policy weight separation from verification flags.
+    - Check constraints on confidence scores, revisions, self-revisions, and self-conflicts.
+    - Revision chains and audit log consistency.
+    - Artifact derivation, parent-child relationships, versioning, and supersession.
+    - Artifact self-referential check constraints (self-parenting and self-supersession rejection).
+    - Project isolation and cascade deletion.
+  - Test results: 7/7 memory model tests passing (0.34s).
+  - Full backend regression suite: 40/40 tests passing (7.13s).
+  - Ruff check & format: 100% clean across all 64 backend files.
+  - Frontend verification: 8/8 test suites passing (10 tests), 0 Oxlint warnings, production bundle clean.

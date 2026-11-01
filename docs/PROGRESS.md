@@ -71,7 +71,7 @@
 | V1.2.1-P2 | V1.2.1 | Multi-Agent Resilience Backend Test Suite (33/33 tests) | COMPLETE | `backend/tests/test_multi_agent_resilience.py` | 6 new dedicated resilience tests, 33/33 total tests passing in 6.97s |
 | V1.2.1-R1 | V1.2.1 | Independent Acceptance Delivery Report & Git Push | COMPLETE | `docs/V1_2_1_RELEASE_REPORT.md` | Comprehensive acceptance verification report with all matrix criteria VERIFIED |
 | V1.3-M1 | V1.3 | Architecture Assessment & Planning | COMPLETE | `docs/V1_3_ARCHITECTURE_ASSESSMENT.md` | Thorough assessment of memory, artifact intelligence, retrieval, governance, and testing strategy |
-| V1.3-M2 | V1.3 | Database Models & Alembic Migration | IN PROGRESS | `backend/app/models/memory.py`, migration | `ProjectMemory`, `MemoryAuditLog`, and enhanced `Artifact` schema |
+| V1.3-M2 | V1.3 | Database Models & Alembic Migration | COMPLETE | `backend/app/models/memory.py`, `backend/alembic/versions/f8d6aac5883a_...`, `backend/tests/test_memory_models.py` | `ProjectMemory`, `MemoryAuditLog`, enhanced `Artifact` lineage schema, Alembic migration upgrade/downgrade verified, 7/7 model tests passing |
 | V1.3-M3 | V1.3 | Core Memory & Artifact Intelligence Services | PLANNED | `MemoryService`, `ArtifactIntelligenceService` | CRUD, provenance scoring, audit logging, conflict detection |
 | V1.3-M4 | V1.3 | Modular Knowledge Retrieval Engine | PLANNED | `KnowledgeRetrievalEngine` | Full-text search, recency scoring, category filters, context budget formatter (max 4000 chars) |
 | V1.3-M5 | V1.3 | LangGraph Workflow Memory Integration | PLANNED | `workflow_graph.py`, `runner.py` | Pre-execution retrieval (`project_context_package`) and post-execution ingestion of verified memories |

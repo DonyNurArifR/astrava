@@ -73,5 +73,6 @@ storage/artifacts/*
 !storage/artifacts/.gitkeep
 postgres_data/
 scratch/
+graphify-out/
 *.sqlite3
 *.db

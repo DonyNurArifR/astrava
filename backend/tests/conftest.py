@@ -14,3 +14,11 @@ async def cleanup_db_connections():
     from app.db.session import async_engine
 
     await async_engine.dispose()
+
+
+@pytest.fixture
+async def db_session():
+    from app.db.session import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        yield session
