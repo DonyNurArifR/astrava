@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import re
+from pathlib import Path
 from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
@@ -20,6 +22,25 @@ logger = logging.getLogger("astrava.orchestrator")
 AGENT_MAP = {a["slug"]: a for a in DEFAULT_AGENTS}
 
 
+def _extract_json_dict(text: str) -> dict[str, Any] | None:
+    text = text.strip()
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(1))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return None
+
+
 async def plan_node(state: OrchestrationState) -> dict[str, Any]:
     # If plan already exists in state (e.g. on resume), preserve existing plan and tasks
     if state.get("plan"):
@@ -37,10 +58,17 @@ async def plan_node(state: OrchestrationState) -> dict[str, Any]:
     )
     tasks = [t.model_dump() for t in plan.tasks]
 
+    # Ensure agent snapshots are initialized
+    agent_snapshots = state.get("agent_snapshots", {})
+    if not agent_snapshots:
+        agent_snapshots = {slug: dict(info) for slug, info in AGENT_MAP.items()}
+
     return {
         "plan": plan.model_dump(),
         "tasks": tasks,
+        "agent_snapshots": agent_snapshots,
         "completed_task_ids": [],
+        "failed_task_ids": [],
         "current_ready_task_ids": [],
         "current_task_index": 0,
         "status": "running",
@@ -50,26 +78,34 @@ async def plan_node(state: OrchestrationState) -> dict[str, Any]:
 async def approval_check_node(state: OrchestrationState) -> dict[str, Any]:
     tasks = state.get("tasks", [])
     completed_ids = set(state.get("completed_task_ids", []))
+    failed_ids = set(state.get("failed_task_ids", []))
 
     # All tasks completed
     if len(completed_ids) == len(tasks) and len(tasks) > 0:
         return {"status": "completed"}
 
-    # Find tasks whose dependencies are fully met and haven't run yet
+    # Find tasks whose dependencies are fully met in completed_ids, not yet run, and not failed
     ready_tasks = [
         t
         for t in tasks
         if t["task_id"] not in completed_ids
-        and t.get("status") != "failed"
+        and t["task_id"] not in failed_ids
+        and t.get("status") not in ("completed", "failed")
         and all(dep in completed_ids for dep in t.get("dependencies", []))
     ]
 
     if not ready_tasks:
-        if state.get("status") == "failed":
+        if failed_ids or state.get("status") == "failed":
             return {"status": "failed"}
-        return {"status": "completed"}
+        if len(completed_ids) == len(tasks):
+            return {"status": "completed"}
+        # If tasks remain but cannot run because prerequisites failed, mark blocked/failed
+        return {
+            "status": "failed",
+            "error": "Downstream tasks blocked due to upstream dependency failures.",
+        }
 
-    # Check if ANY ready task requires human approval
+    # Check if ANY ready task requires human approval and has not been approved
     for t in ready_tasks:
         if t.get("requires_approval", False) and not t.get("approved", False):
             logger.info("Task '%s' requires human approval. Pausing execution.", t["title"])
@@ -91,106 +127,190 @@ async def approval_check_node(state: OrchestrationState) -> dict[str, Any]:
 async def _execute_single_task(
     task: dict[str, Any],
     state: OrchestrationState,
-    project_work_dir: Any,
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Executes a single task using its assigned agent instructions and upstream context."""
+    project_work_dir: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """
+    Executes a single task using its assigned agent instructions,
+    structured upstream context from completed dependencies, bounded retries,
+    and output schema validation.
+    """
     agent_slug = task.get("assigned_agent_slug", "developer")
-    agent_info = AGENT_MAP.get(agent_slug, {})
+    snapshots = state.get("agent_snapshots", {})
+    agent_info = snapshots.get(agent_slug) or AGENT_MAP.get(agent_slug, {})
+
     agent_name = agent_info.get("name", agent_slug)
     agent_instructions = agent_info.get("instructions", "Execute the task meeting all criteria.")
+    exec_config = agent_info.get("execution_config", {})
+    max_retries = exec_config.get("max_retries", 1)
+    timeout_seconds = exec_config.get("timeout_seconds", settings.CLAUDE_EXECUTION_TIMEOUT_SECONDS)
 
-    # Gather upstream deliverables as context
-    upstream_context_blocks = []
+    # 1. Structure upstream context from completed prerequisites only
+    completed_ids = set(state.get("completed_task_ids", []))
     task_lookup = {t["task_id"]: t for t in state.get("tasks", [])}
+    upstream_context_blocks = []
+    used_context_sources = []
+
     for dep_id in task.get("dependencies", []):
-        dep_task = task_lookup.get(dep_id, {})
-        dep_title = dep_task.get("title", dep_id)
-        dep_out = dep_task.get("output_text", "")
-        if dep_out:
-            upstream_context_blocks.append(
-                f"=== Deliverable from [{dep_title}] ===\n{dep_out[:2500]}"
-            )
+        if dep_id in completed_ids:
+            dep_task = task_lookup.get(dep_id, {})
+            dep_title = dep_task.get("title", dep_id)
+            dep_slug = dep_task.get("assigned_agent_slug", "unknown")
+            dep_out = dep_task.get("output_text", "")
+            if dep_out:
+                bounded_out = dep_out.strip()
+                if len(bounded_out) > 3500:
+                    bounded_out = (
+                        bounded_out[:3500]
+                        + "\n[... deliverable truncated for context length; full artifact on disk ...]"
+                    )
+                upstream_context_blocks.append(
+                    f"=== Deliverable from [{dep_title}] (@{dep_slug}) ===\n{bounded_out}"
+                )
+                used_context_sources.append(
+                    {
+                        "task_id": dep_id,
+                        "title": dep_title,
+                        "agent_slug": dep_slug,
+                    }
+                )
 
     upstream_text = (
-        "\n\n".join(upstream_context_blocks) if upstream_context_blocks else "None (Initial stage)."
+        "\n\n".join(upstream_context_blocks)
+        if upstream_context_blocks
+        else "None (Initial stage; no prerequisites)."
     )
+    task["used_context_sources"] = used_context_sources
 
-    # Deterministic task execution (e.g. QA engineer)
+    usage_records: list[dict[str, Any]] = []
+
+    # 2. Deterministic task execution (e.g. QA engineer)
     if task.get("executor_type") == ExecutorType.DETERMINISTIC:
         report = await VerificationEngine.verify_task(project_work_dir)
         output_text = json.dumps(report.model_dump(), indent=2)
         task["output_text"] = output_text
         task["status"] = "completed" if report.overall_passed else "failed"
         task["exit_code"] = 0 if report.overall_passed else 1
+        task["retry_count"] = 0
 
-        usage = {
-            "task_id": task["task_id"],
-            "provider": "deterministic",
-            "model": "deterministic-engine",
-            "duration_ms": 50,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cache_read_tokens": 0,
-            "cache_creation_tokens": 0,
-            "cost_usd": 0.0,
-            "status": "success" if report.overall_passed else "failed",
-            "exit_code": task["exit_code"],
-        }
-        return task, usage
+        usage_records.append(
+            {
+                "task_id": task["task_id"],
+                "provider": "deterministic",
+                "model": "deterministic-engine",
+                "duration_ms": report.total_duration_ms,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+                "cost_usd": 0.0,
+                "status": "success" if report.overall_passed else "failed",
+                "exit_code": task["exit_code"],
+            }
+        )
+        return task, usage_records
 
-    # Claude Code CLI Agent execution
+    # 3. Claude Code CLI execution with bounded retries
     prompt = f"""You are an autonomous AI Agent in the ASTRAVA platform.
-Agent Identity: {agent_name} ({agent_slug})
-Agent Responsibilities & Instructions:
+Agent Identity: {agent_name} (@{agent_slug})
+Agent Responsibilities & Directives:
 {agent_instructions}
 
-Project Context & Upstream Prerequisites:
+Upstream Prerequisite Deliverables (Verified Context):
 {upstream_text}
 
-Assigned Task: {task["title"]}
-Description: {task["description"]}
+Your Assigned Task: {task["title"]}
+Task Description: {task["description"]}
 Acceptance Criteria: {task.get("acceptance_criteria", [])}
 Expected Deliverables: {task.get("expected_output_artifacts", [])}
 
-Produce the full deliverable meeting all criteria directly."""
+Produce the complete deliverable meeting all criteria directly."""
 
     provider = ProviderFactory.get_provider("claude_code")
-    req = ProviderRequest(
+    p_req = ProviderRequest(
         prompt=prompt,
         working_directory=project_work_dir,
         model=task.get("assigned_model", "haiku"),
-        timeout_seconds=settings.CLAUDE_EXECUTION_TIMEOUT_SECONDS,
+        timeout_seconds=timeout_seconds,
     )
 
-    resp = await provider.execute(req)
-    usage = {
-        "task_id": task["task_id"],
-        "provider": "claude_code",
-        "model": resp.canonical_model or task.get("assigned_model", "claude-haiku-5-5"),
-        "duration_ms": resp.duration_ms,
-        "input_tokens": resp.input_tokens,
-        "output_tokens": resp.output_tokens,
-        "cache_read_tokens": resp.cache_read_tokens,
-        "cache_creation_tokens": resp.cache_creation_tokens,
-        "cost_usd": resp.cost_usd,
-        "status": resp.status.value,
-        "exit_code": resp.exit_code,
-    }
+    success = False
+    last_error = "Task execution failed"
 
-    task["output_text"] = resp.output_text
-    task["exit_code"] = resp.exit_code
+    for attempt in range(max_retries + 1):
+        resp = await provider.execute(p_req)
 
-    # Quality control: detect failed/timeout or empty output
-    if resp.status in (ProviderStatus.FAILED, ProviderStatus.TIMEOUT):
-        task["status"] = "failed"
-        task["error_message"] = resp.error_message or "Task execution failed"
-    elif not resp.output_text.strip():
-        task["status"] = "failed"
-        task["error_message"] = "Agent produced empty deliverable"
-    else:
+        u_rec = {
+            "task_id": task["task_id"],
+            "provider": "claude_code",
+            "model": resp.canonical_model or task.get("assigned_model", "claude-haiku-5-5"),
+            "duration_ms": resp.duration_ms,
+            "input_tokens": resp.input_tokens,
+            "output_tokens": resp.output_tokens,
+            "cache_read_tokens": resp.cache_read_tokens,
+            "cache_creation_tokens": resp.cache_creation_tokens,
+            "cost_usd": resp.cost_usd,
+            "status": resp.status.value,
+            "exit_code": resp.exit_code,
+        }
+        usage_records.append(u_rec)
+
+        task["output_text"] = resp.output_text
+        task["exit_code"] = resp.exit_code
+        task["retry_count"] = attempt
+
+        if resp.status in (ProviderStatus.FAILED, ProviderStatus.TIMEOUT):
+            last_error = resp.error_message or f"Provider returned status {resp.status.value}"
+        elif not resp.output_text.strip():
+            last_error = "Agent produced empty deliverable"
+        else:
+            # Check schema validation if required fields specified
+            output_schema = agent_info.get("output_schema", {})
+            required_fields = output_schema.get("required", [])
+            if required_fields:
+                parsed_dict = _extract_json_dict(resp.output_text)
+                if parsed_dict:
+                    missing = [f for f in required_fields if f not in parsed_dict]
+                    if missing:
+                        last_error = f"Deliverable missing required schema fields: {missing}"
+                        if attempt < max_retries:
+                            logger.warning(
+                                "Task '%s' deliverable missing schema fields: %s. Retrying (%d/%d)...",
+                                task["task_id"],
+                                missing,
+                                attempt + 1,
+                                max_retries,
+                            )
+                            await asyncio.sleep(1)
+                            continue
+                    else:
+                        success = True
+                        break
+                else:
+                    # Output was not JSON, but succeeded
+                    success = True
+                    break
+            else:
+                success = True
+                break
+
+        if not success and attempt < max_retries:
+            logger.warning(
+                "Task '%s' failed on attempt %d/%d (%s). Retrying...",
+                task["task_id"],
+                attempt + 1,
+                max_retries,
+                last_error,
+            )
+            await asyncio.sleep(1)
+
+    if success:
         task["status"] = "completed"
+        task["error_message"] = None
+    else:
+        task["status"] = "failed"
+        task["error_message"] = last_error
 
-    return task, usage
+    return task, usage_records
 
 
 async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
@@ -212,6 +332,7 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
     )
 
     usage_list = list(state.get("usage_records", []))
+    failed_ids = list(state.get("failed_task_ids", []))
     any_failed = False
     error_msg = None
 
@@ -221,20 +342,23 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
             logger.error("Task %s raised unhandled exception: %s", target_task["task_id"], res)
             target_task["status"] = "failed"
             target_task["error_message"] = str(res)
+            failed_ids.append(target_task["task_id"])
             any_failed = True
             error_msg = str(res)
         else:
-            updated_task, usage = res
+            updated_task, u_records = res
             target_task.update(updated_task)
-            if usage:
-                usage_list.append(usage)
+            usage_list.extend(u_records)
             if target_task.get("status") == "failed":
+                failed_ids.append(target_task["task_id"])
                 any_failed = True
                 error_msg = target_task.get("error_message", "Task failed")
 
     return {
         "tasks": tasks,
         "usage_records": usage_list,
+        "failed_task_ids": list(set(failed_ids)),
+        # Do not abort before verify/artifact processing; route_after_artifact handles termination
         "status": "failed" if any_failed else "running",
         "error": error_msg,
     }
@@ -272,6 +396,7 @@ async def artifact_node(state: OrchestrationState) -> dict[str, Any]:
 
     for tid in ready_ids:
         task = task_map.get(tid)
+        # Sibling tasks that completed successfully in this wave get artifacts registered
         if not task or task.get("status") != "completed":
             continue
 
@@ -295,7 +420,8 @@ async def artifact_node(state: OrchestrationState) -> dict[str, Any]:
                 }
             )
 
-        completed_ids.append(tid)
+        if tid not in completed_ids:
+            completed_ids.append(tid)
 
     return {
         "artifacts": artifacts,
@@ -310,21 +436,20 @@ async def complete_node(state: OrchestrationState) -> dict[str, Any]:
 
 
 def route_after_approval_check(state: OrchestrationState) -> Literal["dispatch_task", "__end__"]:
-    if state.get("status") == "waiting_approval":
+    if state.get("status") in ("waiting_approval", "failed"):
         return "__end__"
     return "dispatch_task"
 
 
-def route_after_dispatch(state: OrchestrationState) -> Literal["verify", "__end__"]:
-    if state.get("status") == "failed":
-        return "__end__"
+def route_after_dispatch(state: OrchestrationState) -> Literal["verify"]:
+    # Always route to verify so completed tasks in the batch have their output processed
     return "verify"
 
 
 def route_after_artifact(
     state: OrchestrationState,
 ) -> Literal["approval_check", "complete", "__end__"]:
-    if state.get("status") == "failed":
+    if state.get("status") == "failed" or state.get("failed_task_ids"):
         return "__end__"
 
     tasks = state.get("tasks", [])
@@ -359,15 +484,7 @@ def build_orchestrator_graph():
         },
     )
 
-    workflow.add_conditional_edges(
-        "dispatch_task",
-        route_after_dispatch,
-        {
-            "verify": "verify",
-            "__end__": END,
-        },
-    )
-
+    workflow.add_edge("dispatch_task", "verify")
     workflow.add_edge("verify", "artifact")
 
     workflow.add_conditional_edges(

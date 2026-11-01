@@ -262,3 +262,48 @@
   - Semantic understanding: High complexity, 15 capabilities, 4 deliverables, clarification requested.
   - DAG plan: 7 tasks across 6 stages with Stage 1 parallel execution.
   - Task 1 dispatched to `product-researcher`: 6,588 tokens generated in 41.1s via `claude-haiku-5-5`, cost $0.006196. Status: 100% SUCCESS.
+
+---
+
+## 2026-11-01: ASTRAVA V1.2.1 — Multi-Agent Reliability & Quality Assurance
+
+### Phase 0: Baseline Audit & Vulnerability Discovery
+- Performed rigorous static analysis and concurrency tracing across the V1.2 orchestrator, DAG planner, and agent subsystem.
+- Identified and documented 7 prioritized findings in `docs/V1_2_1_AUDIT.md`:
+  - AUD-01 (High): Duplicate task ID misdiagnosis in DAG validation.
+  - AUD-02 (Critical): Concurrency wave partial failure unpersisted sibling completion.
+  - AUD-03 (High): Missing bounded retry policy for transient provider timeouts.
+  - AUD-04 (Medium): Blind context slicing and failure output contamination.
+  - AUD-05 (High): QA Verification lacking dynamic test suite execution runner.
+  - AUD-06 (Medium): Agent configuration mutable inflight during active workflows.
+  - AUD-07 (Medium): Lack of granular execution state and concurrency wave visibility in UI.
+
+### Phase 1: Architectural Hardening & Implementation
+1. **DAG Validation Deduplication (AUD-01):**
+   - Modified `backend/app/orchestrator/planner.py`: added explicit `seen_ids` duplicate validation before graph construction, raising `ValueError: Duplicate task identifier detected: '<id>'`.
+2. **Partial Wave Isolation & Sibling Completion Persistence (AUD-02):**
+   - Modified `backend/app/orchestrator/workflow_graph.py`: structured concurrent execution to capture outputs of all tasks in a wave; `verify_node` and `artifact_node` process and register all completed sibling tasks to disk and database before `route_after_artifact` terminates pipeline on failure.
+3. **Autonomous Bounded Retries (AUD-03):**
+   - Modified `_execute_single_task` with exponential backoff retry loop (`attempt 1/1`) and `retry_count` tracking.
+4. **Context Traceability & Filtering (AUD-04):**
+   - Structured prerequisite deliverables passing strictly from completed dependencies (`dep_id in completed_ids`), bounded to 3500 chars with truncation notices, and tagged with `used_context_sources`.
+5. **Dynamic QA Deterministic Test Runner (AUD-05):**
+   - Enhanced `VerificationEngine.verify_task` to discover and execute project test suites (`pytest`), validate JSON deliverable schemas, capture stdout/stderr, and return process exit codes.
+6. **Immutable Agent Snapshots (AUD-06):**
+   - Captured immutable `agent_snapshots` inside `initial_state` at execution start in `runner.py`, preventing inflight configuration drift.
+7. **Real-Time Per-Wave Database Commits:**
+   - Modified `OrchestrationRunner` to stream LangGraph execution via `graph.astream(...)` and commit completed tasks, artifacts, and state to PostgreSQL immediately upon completion of each wave.
+8. **Frontend Execution Lifecycle Badges (AUD-07):**
+   - Updated `CommandCenterPage.tsx` and `ExecutionsPage.tsx` with granular task badges (`Running (Parallel Wave)`, `Completed`, `Failed`, `Awaiting Approval`, `Blocked`) and context source chips.
+
+### Phase 2: Verification, Controlled Crash Recovery & Live Proofs
+- **Automated Backend Resilience Suite:** Added `tests/test_multi_agent_resilience.py` with 6 dedicated tests. Total test suite: 33/33 tests passing in 6.97s.
+- **Frontend Verification:** Vitest 8/8 suites passing (10 tests) in 851ms, Oxlint 0 warnings / 0 errors across 29 files, Vite production bundle compiled in 172ms.
+- **Controlled Real Process Crash Recovery (`scratch/test_real_parallel_recovery.py`):**
+  - Process 1 (PID 79771) executed 7 tasks across 2 parallel waves until `WAITING_APPROVAL`.
+  - Process 1 abruptly terminated with OS-level `killpg(SIGKILL)`. Confirmed dead: True.
+  - Process 2 (PID 83554) booted on port 8011, restored checkpoint, approved resume, executed final quality review task, and finished with status `completed`.
+  - Verified post-recovery task count in PostgreSQL: 8 pre-crash == 8 post-recovery (ZERO DUPLICATE TASKS).
+  - Verified 8 persisted deliverables/artifacts.
+- **Live Multi-Agent Proofs:** Real invocations using canonical `claude-haiku-5-5` via non-interactive Claude Code CLI across Media Studio (Scenario B) and SaaS Studio (Scenario A).
+- **Release Documentation:** Authored `docs/V1_2_1_AUDIT.md` and `docs/V1_2_1_RELEASE_REPORT.md`.

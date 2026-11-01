@@ -575,60 +575,101 @@ export const CommandCenterPage: React.FC = () => {
           {activeExecution.state_data?.tasks && (
             <div className="space-y-2">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Agent Tasks
+                Agent Tasks & Concurrency Lifecycle
               </span>
               <div className="space-y-2">
                 {activeExecution.state_data.tasks.map((t: any) => {
                   const isCompleted = activeExecution.state_data?.completed_task_ids?.includes(t.task_id);
-                  const isFailed = t.status === 'failed';
+                  const isFailed = t.status === 'failed' || activeExecution.state_data?.failed_task_ids?.includes(t.task_id);
                   const isWaitingApproval = activeExecution.state_data?.active_approval_id === t.task_id;
+                  const isRunning = activeExecution.state_data?.current_ready_task_ids?.includes(t.task_id) && activeExecution.status === 'running';
+                  const isParallel = isRunning && (activeExecution.state_data?.current_ready_task_ids?.length || 0) > 1;
+                  const isBlocked = !isCompleted && !isFailed && !isRunning && !isWaitingApproval &&
+                    t.dependencies?.some((d: string) => activeExecution.state_data?.failed_task_ids?.includes(d));
 
                   return (
                     <div
                       key={t.task_id}
-                      className="p-3 rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex items-center justify-between text-xs"
+                      className="p-3.5 rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 space-y-2 text-xs"
                     >
-                      <div className="flex items-center gap-2.5">
-                        {isCompleted ? (
-                          <CheckCircle size={15} className="text-emerald-500 shrink-0" />
-                        ) : isFailed ? (
-                          <AlertTriangle size={15} className="text-red-500 shrink-0" />
-                        ) : isWaitingApproval ? (
-                          <ShieldCheck size={15} className="text-amber-500 shrink-0 animate-pulse" />
-                        ) : (
-                          <div className="w-3.5 h-3.5 rounded-full border-2 border-slate-400 shrink-0" />
-                        )}
-                        <div>
-                          <span className="font-semibold text-slate-900 dark:text-white">
-                            {t.title}
-                          </span>
-                          {t.assigned_agent_slug && (
-                            <span className="ml-2 font-mono text-[10px] text-purple-600 dark:text-purple-400">
-                              @{t.assigned_agent_slug}
-                            </span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          {isCompleted ? (
+                            <CheckCircle size={15} className="text-emerald-500 shrink-0" />
+                          ) : isFailed ? (
+                            <AlertTriangle size={15} className="text-red-500 shrink-0" />
+                          ) : isWaitingApproval ? (
+                            <ShieldCheck size={15} className="text-amber-500 shrink-0 animate-pulse" />
+                          ) : isRunning ? (
+                            <div className="w-3.5 h-3.5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin shrink-0" />
+                          ) : (
+                            <div className="w-3.5 h-3.5 rounded-full border-2 border-slate-400 shrink-0" />
                           )}
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-slate-900 dark:text-white">
+                              {t.title}
+                            </span>
+                            {t.assigned_agent_slug && (
+                              <span className="inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/40">
+                                <Bot size={10} />
+                                @{t.assigned_agent_slug}
+                              </span>
+                            )}
+                            {t.retry_count > 0 && (
+                              <span className="font-mono text-[9px] px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300">
+                                Retry #{t.retry_count}
+                              </span>
+                            )}
+                          </div>
                         </div>
+
+                        <span
+                          className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                            isCompleted
+                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                              : isFailed
+                              ? 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                              : isWaitingApproval
+                              ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 animate-pulse'
+                              : isRunning
+                              ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 animate-pulse'
+                              : isBlocked
+                              ? 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
+                              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                          }`}
+                        >
+                          {isCompleted
+                            ? 'Completed'
+                            : isFailed
+                            ? 'Failed'
+                            : isWaitingApproval
+                            ? 'Awaiting Approval'
+                            : isRunning
+                            ? isParallel
+                              ? 'Running (Parallel Wave)'
+                              : 'Running'
+                            : isBlocked
+                            ? 'Blocked'
+                            : 'Planned'}
+                        </span>
                       </div>
 
-                      <span
-                        className={`text-[10px] font-mono px-2 py-0.5 rounded ${
-                          isCompleted
-                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                            : isFailed
-                            ? 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300'
-                            : isWaitingApproval
-                            ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
-                            : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                        }`}
-                      >
-                        {isCompleted
-                          ? 'Completed'
-                          : isFailed
-                          ? 'Failed'
-                          : isWaitingApproval
-                          ? 'Awaiting Approval'
-                          : 'Pending'}
-                      </span>
+                      {/* Context Provenance & Dependents */}
+                      {t.used_context_sources && t.used_context_sources.length > 0 && (
+                        <div className="pl-6 pt-0.5 text-[10px] text-slate-400 flex items-center gap-1.5">
+                          <span className="font-semibold text-slate-500 dark:text-slate-400">Context Source:</span>
+                          <div className="flex flex-wrap gap-1">
+                            {t.used_context_sources.map((src: any) => (
+                              <span
+                                key={src.task_id}
+                                className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-slate-600 dark:text-slate-300"
+                              >
+                                {src.title} (@{src.agent_slug})
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

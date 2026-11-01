@@ -1,7 +1,7 @@
 # ASTRAVA Development Roadmap
-**Version:** 1.2.0  
+**Version:** 1.2.1  
 **Product:** ASTRAVA — AI Creation and Orchestration Platform ("From vision to execution.")  
-**Overall Status:** V1.2 AGENT INTELLIGENCE & WORKFLOW ENGINE VERIFIED & DELIVERED
+**Overall Status:** V1.2.1 MULTI-AGENT RELIABILITY & QUALITY ASSURANCE VERIFIED & DELIVERED
 
 ---
 
@@ -22,3 +22,4 @@
 | **M10** | Documentation & Delivery | **COMPLETE** | Comprehensive README, ARCHITECTURE, ROADMAP, PROGRESS, EXECUTION_LOG, API reference, PROVIDER docs. |
 | **V1.1** | Independent Audit, Reliability & Security Hardening | **COMPLETE** | Resolved all 7 audit findings: resumption data deduplication, concurrency bound, expanded credential redaction, process group termination, Pydantic input boundaries, Vitest test suite, Oxlint cleanup, DB restart durability. |
 | **V1.2** | Agent Intelligence & Workflow Engine | **COMPLETE** | Reusable Agent Registry (16 specialized agents), semantic objective understanding with clarification prompts, dynamic Directed Acyclic Graph (DAG) planning, parallel execution of independent tasks via `asyncio.gather`, upstream context injection, deterministic quality verification, and Agent Registry UI. |
+| **V1.2.1** | Multi-Agent Reliability & Quality Assurance | **COMPLETE** | Resolved 7 architectural findings (AUD-01 to AUD-07): duplicate DAG ID diagnosis, concurrent sibling task persistence, per-wave real-time DB commits, autonomous bounded retries with exponential backoff, context provenance tracking, immutable agent snapshots, dynamic test runner in QA verification, real OS-level SIGKILL crash recovery proof with zero task duplicates, and granular concurrency UI visibility. |

@@ -5,6 +5,11 @@ import {
   Play,
   Terminal,
   X,
+  Bot,
+  CheckCircle,
+  AlertTriangle,
+  ShieldCheck,
+  FileCheck,
 } from 'lucide-react';
 import { api } from '../api/client';
 import type { Execution } from '../types/api';
@@ -225,6 +230,133 @@ export const ExecutionsPage: React.FC = () => {
               {selectedExecution.error_message && (
                 <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 rounded-lg">
                   {selectedExecution.error_message}
+                </div>
+              )}
+
+              {/* Multi-Agent DAG Tasks & Lifecycle */}
+              {selectedExecution.state_data?.tasks && (
+                <div className="space-y-2">
+                  <h4 className="font-bold uppercase text-[10px] tracking-wider text-slate-400">
+                    Agent Tasks & Concurrency Lifecycle ({selectedExecution.state_data.tasks.length})
+                  </h4>
+                  <div className="space-y-2">
+                    {selectedExecution.state_data.tasks.map((t: any, tIdx: number) => {
+                      const isCompleted = selectedExecution.state_data?.completed_task_ids?.includes(t.task_id);
+                      const isFailed = t.status === 'failed' || selectedExecution.state_data?.failed_task_ids?.includes(t.task_id);
+                      const isWaitingApproval = selectedExecution.state_data?.active_approval_id === t.task_id;
+                      const isRunning = selectedExecution.state_data?.current_ready_task_ids?.includes(t.task_id) && selectedExecution.status === 'running';
+                      const isParallel = isRunning && (selectedExecution.state_data?.current_ready_task_ids?.length || 0) > 1;
+                      const isBlocked = !isCompleted && !isFailed && !isRunning && !isWaitingApproval &&
+                        t.dependencies?.some((d: string) => selectedExecution.state_data?.failed_task_ids?.includes(d));
+
+                      return (
+                        <div
+                          key={t.task_id || `task-${tIdx}`}
+                          className="p-3 rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 space-y-1.5 text-xs"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              {isCompleted ? (
+                                <CheckCircle size={14} className="text-emerald-500 shrink-0" />
+                              ) : isFailed ? (
+                                <AlertTriangle size={14} className="text-red-500 shrink-0" />
+                              ) : isWaitingApproval ? (
+                                <ShieldCheck size={14} className="text-amber-500 shrink-0 animate-pulse" />
+                              ) : isRunning ? (
+                                <div className="w-3.5 h-3.5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin shrink-0" />
+                              ) : (
+                                <div className="w-3.5 h-3.5 rounded-full border-2 border-slate-400 shrink-0" />
+                              )}
+                              <span className="font-semibold text-slate-900 dark:text-white">
+                                {t.title}
+                              </span>
+                              {t.assigned_agent_slug && (
+                                <span className="inline-flex items-center gap-1 font-mono text-[9px] px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/40">
+                                  <Bot size={9} />
+                                  @{t.assigned_agent_slug}
+                                </span>
+                              )}
+                              {t.retry_count > 0 && (
+                                <span className="font-mono text-[9px] px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300">
+                                  Retry #{t.retry_count}
+                                </span>
+                              )}
+                            </div>
+
+                            <span
+                              className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded ${
+                                isCompleted
+                                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                  : isFailed
+                                  ? 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                                  : isWaitingApproval
+                                  ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 animate-pulse'
+                                  : isRunning
+                                  ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 animate-pulse'
+                                  : isBlocked
+                                  ? 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
+                                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                              }`}
+                            >
+                              {isCompleted
+                                ? 'Completed'
+                                : isFailed
+                                ? 'Failed'
+                                : isWaitingApproval
+                                ? 'Awaiting Approval'
+                                : isRunning
+                                ? isParallel
+                                  ? 'Running (Parallel Wave)'
+                                  : 'Running'
+                                : isBlocked
+                                ? 'Blocked'
+                                : 'Planned'}
+                            </span>
+                          </div>
+
+                          {t.used_context_sources && t.used_context_sources.length > 0 && (
+                            <div className="pl-5 text-[10px] text-slate-400 flex items-center gap-1">
+                              <span className="font-medium text-slate-500">Context Source:</span>
+                              <div className="flex flex-wrap gap-1">
+                                {t.used_context_sources.map((src: any) => (
+                                  <span
+                                    key={src.task_id}
+                                    className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 font-mono text-slate-600 dark:text-slate-300"
+                                  >
+                                    {src.title} (@{src.agent_slug})
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Artifacts if recorded */}
+              {selectedExecution.state_data?.artifacts && selectedExecution.state_data.artifacts.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="font-bold uppercase text-[10px] tracking-wider text-slate-400">
+                    Generated Deliverables & Artifacts ({selectedExecution.state_data.artifacts.length})
+                  </h4>
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
+                    {selectedExecution.state_data.artifacts.map((art: any, i: number) => (
+                      <div key={i} className="p-2.5 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/30">
+                        <div className="flex items-center gap-2">
+                          <FileCheck size={14} className="text-emerald-500 shrink-0" />
+                          <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">
+                            {art.name}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {art.size_bytes ? `${art.size_bytes} bytes` : 'Stored on disk'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 

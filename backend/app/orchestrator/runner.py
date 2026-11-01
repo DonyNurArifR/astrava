@@ -19,6 +19,7 @@ from app.schemas.execution import ExecutionCreate
 from app.schemas.task import TaskCreate, TaskUpdate
 from app.schemas.usage import ModelExecutionCreate
 from app.schemas.workflow import WorkflowCreate
+from app.services.agent_service import AgentService
 from app.services.approval_service import ApprovalService
 from app.services.artifact_service import ArtifactService
 from app.services.task_service import TaskService
@@ -71,14 +72,37 @@ class OrchestrationRunner:
             {"objective": objective, "studio_type": studio_type},
         )
 
+        # Capture immutable agent configuration snapshot for reproducible execution
+        agents = await AgentService.list_agents(db)
+        if not agents:
+            await AgentService.seed_default_agents(db)
+            agents = await AgentService.list_agents(db)
+        agent_snapshots = {
+            a.slug: {
+                "name": a.name,
+                "description": a.description,
+                "instructions": a.instructions,
+                "input_schema": a.input_schema,
+                "output_schema": a.output_schema,
+                "available_tools": a.available_tools,
+                "model_config_data": a.model_config_data,
+                "execution_config": a.execution_config,
+                "verification_requirements": a.verification_requirements,
+                "version": a.version,
+            }
+            for a in agents
+        }
+
         # 3. Setup LangGraph initial state
         initial_state: OrchestrationState = {
             "execution_id": str(execution.id),
             "project_id": str(project_id),
             "objective": objective,
             "studio_type": studio_type,
+            "agent_snapshots": agent_snapshots,
             "tasks": [],
             "completed_task_ids": [],
+            "failed_task_ids": [],
             "current_task_index": 0,
             "is_paused": False,
             "status": "running",
@@ -89,12 +113,21 @@ class OrchestrationRunner:
             "synced_usage_count": 0,
         }
 
-        # 4. Run LangGraph graph with concurrency semaphore
+        # 4. Run LangGraph graph with concurrency semaphore and per-stage persistence
         graph = build_orchestrator_graph()
+        current_state = dict(initial_state)
         async with _execution_semaphore:
-            final_state = await graph.ainvoke(initial_state)
+            async for event in graph.astream(initial_state):
+                for node_name, node_output in event.items():
+                    if node_output and isinstance(node_output, dict):
+                        current_state.update(node_output)
+                    if node_name in ("plan", "artifact", "complete"):
+                        await OrchestrationRunner._sync_state_to_db(
+                            db, execution.id, project_id, current_state
+                        )
+            final_state = current_state
 
-        # 5. Synchronize final state back to Database
+        # 5. Final synchronization back to Database
         await OrchestrationRunner._sync_state_to_db(db, execution.id, project_id, final_state)
         # Reload execution with events loaded
         reloaded = await WorkflowService.get_execution(db, execution.id)
@@ -106,82 +139,84 @@ class OrchestrationRunner:
         execution_id: uuid.UUID,
         decision_req: ApprovalDecisionRequest,
     ) -> WorkflowExecution:
-        execution = await WorkflowService.get_execution(db, execution_id)
-        if not execution:
-            raise ValueError(f"Execution {execution_id} not found")
+        async with _execution_semaphore:
+            execution = await WorkflowService.get_execution(db, execution_id)
+            if not execution:
+                raise ValueError(f"Execution {execution_id} not found")
 
-        # Guard against duplicate resumption if already completed or cancelled
-        if execution.status in [ExecutionStatus.COMPLETED, ExecutionStatus.CANCELLED]:
-            return execution
+            # Guard against duplicate resumption if already completed or cancelled
+            if execution.status in [ExecutionStatus.COMPLETED, ExecutionStatus.CANCELLED]:
+                return execution
 
-        state: OrchestrationState = dict(execution.state_data)  # type: ignore
+            state: OrchestrationState = dict(execution.state_data)  # type: ignore
 
-        # Mark approval records as decided in DB
-        pending_approvals = await ApprovalService.list_pending(db)
-        for appr in pending_approvals:
-            if appr.execution_id == execution_id:
-                await ApprovalService.decide(
+            # Mark approval records as decided in DB
+            pending_approvals = await ApprovalService.list_pending(db)
+            for appr in pending_approvals:
+                if appr.execution_id == execution_id:
+                    await ApprovalService.decide(
+                        db,
+                        appr.id,
+                        status=decision_req.decision,
+                        reason=decision_req.reason,
+                        decided_by=decision_req.decided_by,
+                    )
+
+            if decision_req.decision == ApprovalStatus.REJECTED:
+                # Rejection stops execution
+                await WorkflowService.update_execution_status(
                     db,
-                    appr.id,
-                    status=decision_req.decision,
-                    reason=decision_req.reason,
-                    decided_by=decision_req.decided_by,
+                    execution_id,
+                    ExecutionStatus.CANCELLED,
+                    error_message=f"Operator rejected: {decision_req.reason}",
                 )
+                await WorkflowService.record_event(
+                    db, execution_id, "pipeline_rejected", {"reason": decision_req.reason}
+                )
+                reloaded = await WorkflowService.get_execution(db, execution_id)
+                return reloaded or execution
 
-        if decision_req.decision == ApprovalStatus.REJECTED:
-            # Rejection stops execution
+            # Approved -> Mark active task as approved in state
+            tasks = state.get("tasks", [])
+            active_task_id = state.get("active_approval_id")
+            approved_title = "Approved Task"
+            for t in tasks:
+                if t.get("task_id") == active_task_id or (
+                    not active_task_id and t.get("requires_approval")
+                ):
+                    t["approved"] = True
+                    t["requires_approval"] = False
+                    approved_title = t.get("title", approved_title)
+
+            state["tasks"] = tasks
+            state["status"] = "running"
+            state["active_approval_id"] = None
+
             await WorkflowService.update_execution_status(
-                db,
-                execution_id,
-                ExecutionStatus.CANCELLED,
-                error_message=f"Operator rejected: {decision_req.reason}",
+                db, execution_id, ExecutionStatus.RUNNING, state_data=state
             )
             await WorkflowService.record_event(
-                db, execution_id, "pipeline_rejected", {"reason": decision_req.reason}
+                db, execution_id, "pipeline_resumed", {"approved_task": approved_title}
+            )
+
+            # Resume LangGraph execution from approved task
+            graph = build_orchestrator_graph()
+            current_state = dict(state)
+            async for event in graph.astream(state):
+                for node_name, node_output in event.items():
+                    if node_output and isinstance(node_output, dict):
+                        current_state.update(node_output)
+                    if node_name in ("artifact", "complete"):
+                        await OrchestrationRunner._sync_state_to_db(
+                            db, execution_id, execution.project_id, current_state
+                        )
+            final_state = current_state
+
+            await OrchestrationRunner._sync_state_to_db(
+                db, execution_id, execution.project_id, final_state
             )
             reloaded = await WorkflowService.get_execution(db, execution_id)
             return reloaded or execution
-
-        # Approved -> Mark active task as approved in state
-        tasks = state.get("tasks", [])
-        active_task_id = state.get("active_approval_id")
-        approved_title = "Approved Task"
-        for t in tasks:
-            if t.get("task_id") == active_task_id or (
-                not active_task_id and t.get("requires_approval")
-            ):
-                t["approved"] = True
-                t["requires_approval"] = False
-                approved_title = t.get("title", approved_title)
-
-        state["tasks"] = tasks
-        state["status"] = "running"
-        state["active_approval_id"] = None
-
-        await WorkflowService.update_execution_status(
-            db, execution_id, ExecutionStatus.RUNNING, state_data=state
-        )
-        await WorkflowService.record_event(
-            db, execution_id, "pipeline_resumed", {"approved_task": approved_title}
-        )
-
-        # Resume LangGraph execution from approved task with concurrency semaphore
-        graph = build_orchestrator_graph()
-        async with _execution_semaphore:
-            # Re-check execution status inside semaphore to prevent race under simultaneous resume calls
-            fresh_exec = await WorkflowService.get_execution(db, execution_id)
-            if fresh_exec and fresh_exec.status in [
-                ExecutionStatus.COMPLETED,
-                ExecutionStatus.CANCELLED,
-            ]:
-                return fresh_exec
-            final_state = await graph.ainvoke(state)
-
-        await OrchestrationRunner._sync_state_to_db(
-            db, execution_id, execution.project_id, final_state
-        )
-        reloaded = await WorkflowService.get_execution(db, execution_id)
-        return reloaded or execution
 
     @staticmethod
     async def _sync_state_to_db(
@@ -196,6 +231,7 @@ class OrchestrationRunner:
         tasks = state.get("tasks", [])
         task_db_ids = state.get("task_db_ids", {}) or {}
         completed_ids = set(state.get("completed_task_ids", []))
+        failed_ids = set(state.get("failed_task_ids", []))
 
         # Re-sync with any existing tasks in DB for this project to guarantee deduplication
         existing_tasks = await TaskService.list_by_project(db, project_id)
@@ -219,7 +255,11 @@ class OrchestrationRunner:
                             output_data={"result": t.get("output_text", "")},
                         ),
                     )
-                elif t.get("status") == "failed" or t.get("exit_code", 0) != 0:
+                elif (
+                    t.get("status") == "failed"
+                    or t.get("exit_code", 0) != 0
+                    or task_key in failed_ids
+                ):
                     await TaskService.update(
                         db,
                         existing_db_id,
@@ -254,7 +294,11 @@ class OrchestrationRunner:
                             output_data={"result": t.get("output_text", "")},
                         ),
                     )
-                elif t.get("status") == "failed" or t.get("exit_code", 0) != 0:
+                elif (
+                    t.get("status") == "failed"
+                    or t.get("exit_code", 0) != 0
+                    or task_key in failed_ids
+                ):
                     await TaskService.update(
                         db,
                         t_obj.id,
@@ -351,7 +395,7 @@ class OrchestrationRunner:
             await WorkflowService.record_event(
                 db, execution_id, "pipeline_completed", {"tasks_count": len(tasks)}
             )
-        elif state_status == "failed":
+        elif state_status == "failed" or state.get("failed_task_ids"):
             await WorkflowService.update_execution_status(
                 db,
                 execution_id,
@@ -374,3 +418,6 @@ class OrchestrationRunner:
                 state_data=state,
                 current_step=current_step,
             )
+
+        # Explicitly commit transaction per execution wave to guarantee crash recovery
+        await db.commit()

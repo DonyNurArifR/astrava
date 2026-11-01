@@ -47,7 +47,12 @@ class PlannerService:
         and computes execution stages (parallel waves of independent tasks).
         Raises ValueError if circular dependency or unknown dependency is detected.
         """
-        task_ids = {t.task_id for t in tasks}
+        task_ids: set[str] = set()
+        for t in tasks:
+            if t.task_id in task_ids:
+                raise ValueError(f"Duplicate task identifier detected: '{t.task_id}'")
+            task_ids.add(t.task_id)
+
         in_degree: dict[str, int] = {t.task_id: 0 for t in tasks}
         dependents: dict[str, list[str]] = defaultdict(list)
 

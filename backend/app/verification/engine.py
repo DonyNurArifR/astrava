@@ -1,4 +1,5 @@
 import asyncio
+import json
 import shutil
 import time
 from pathlib import Path
@@ -113,7 +114,6 @@ class VerificationEngine:
         # 1. Deterministic Python syntax check if python files exist
         py_files = list(working_directory.glob("**/*.py"))
         if py_files and run_lint:
-            # Quick syntax check with py_compile
             syntax_check = await cls.run_command_check(
                 name="Python Syntax Check",
                 cmd=["python3", "-m", "py_compile"] + [str(p) for p in py_files[:10]],
@@ -121,10 +121,43 @@ class VerificationEngine:
             )
             checks.append(syntax_check)
 
-        # 2. Collect Git diff
+        # 2. Automated Test Execution if test files exist
+        test_files = list(working_directory.glob("**/test_*.py")) + list(
+            working_directory.glob("**/*_test.py")
+        )
+        if test_files and run_tests:
+            test_check = await cls.run_command_check(
+                name="Automated Test Suite (pytest)",
+                cmd=["pytest", "-v"] + [str(p) for p in test_files[:5]],
+                cwd=working_directory,
+                timeout_seconds=30,
+            )
+            checks.append(test_check)
+
+        # 3. JSON Output Validation
+        json_files = list(working_directory.glob("**/*.json"))
+        for jf in json_files[:5]:
+            try:
+                content = jf.read_text(encoding="utf-8")
+                if content.strip():
+                    json.loads(content)
+                    checks.append(
+                        CheckResult(name=f"JSON Validation: {jf.name}", passed=True, duration_ms=1)
+                    )
+            except Exception as e:
+                checks.append(
+                    CheckResult(
+                        name=f"JSON Validation: {jf.name}",
+                        passed=False,
+                        duration_ms=1,
+                        error=f"Malformed JSON: {e}",
+                    )
+                )
+
+        # 4. Collect Git diff
         git_diff = await cls.collect_git_diff(working_directory)
 
-        # 3. Overall pass evaluation
+        # 5. Overall pass evaluation
         overall_passed = all(c.passed for c in checks) if checks else True
         total_duration = int((time.monotonic() - start) * 1000)
 
@@ -133,5 +166,9 @@ class VerificationEngine:
             total_duration_ms=total_duration,
             checks=checks,
             git_diff=git_diff,
-            metadata={"files_checked": len(py_files)},
+            metadata={
+                "files_checked": len(py_files),
+                "tests_executed": len(test_files),
+                "json_artifacts_verified": len(json_files),
+            },
         )
