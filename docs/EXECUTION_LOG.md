@@ -307,3 +307,21 @@
   - Verified 8 persisted deliverables/artifacts.
 - **Live Multi-Agent Proofs:** Real invocations using canonical `claude-haiku-5-5` via non-interactive Claude Code CLI across Media Studio (Scenario B) and SaaS Studio (Scenario A).
 - **Release Documentation:** Authored `docs/V1_2_1_AUDIT.md` and `docs/V1_2_1_RELEASE_REPORT.md`.
+
+---
+
+## 2026-11-01: ASTRAVA V1.3 — Persistent Project Intelligence
+
+### Phase 0: Baseline Verification & Architecture Assessment
+- Verified Git baseline commit `f3aa9b95ec01d8882c57f04a4a7abf34180fb8d5`, branch `main`, author `Abstract <61998277+DonyNurArifR@users.noreply.github.com>`.
+- Verified non-interactive Claude Code CLI (`2.1.316`), canonical model `claude-haiku-5-5`, zero paid external API keys.
+- Audited existing models, services, LangGraph workflow graph, and frontend pages.
+- Authored comprehensive `docs/V1_3_ARCHITECTURE_ASSESSMENT.md` detailing:
+  - 10-category Project Memory model (`objective`, `requirement`, `constraint`, `decision`, `discovery`, `preference`, `open_question`, `risk`, `milestone`, `rejected_approach`).
+  - 4-tier provenance model (`user_provided`, `verified_finding`, `agent_conclusion`, `assumption`) with confidence scores.
+  - Conflict detection engine preventing silent overwrites of architectural decisions.
+  - Artifact intelligence graph (versioning, parent-child lineage, supersession).
+  - Native PostgreSQL 16 Full-Text Search (`tsvector`/`tsquery`) with strict context budgeting (max 4,000 characters).
+  - LangGraph pre-execution retrieval and post-execution memory ingestion nodes.
+  - Interactive Project Intelligence frontend experience.
+- Formulated 8 verifiable implementation milestones (M1.3-1 to M1.3-8).

@@ -70,3 +70,11 @@
 | V1.2.1-P1 | V1.2.1 | Real Controlled Process Crash Recovery Verification | COMPLETE | `scratch/test_real_parallel_recovery.py` | Real `SIGKILL` on Process 1 (PID 79771), Process 2 (PID 83554) resumes, 0 task duplicates |
 | V1.2.1-P2 | V1.2.1 | Multi-Agent Resilience Backend Test Suite (33/33 tests) | COMPLETE | `backend/tests/test_multi_agent_resilience.py` | 6 new dedicated resilience tests, 33/33 total tests passing in 6.97s |
 | V1.2.1-R1 | V1.2.1 | Independent Acceptance Delivery Report & Git Push | COMPLETE | `docs/V1_2_1_RELEASE_REPORT.md` | Comprehensive acceptance verification report with all matrix criteria VERIFIED |
+| V1.3-M1 | V1.3 | Architecture Assessment & Planning | COMPLETE | `docs/V1_3_ARCHITECTURE_ASSESSMENT.md` | Thorough assessment of memory, artifact intelligence, retrieval, governance, and testing strategy |
+| V1.3-M2 | V1.3 | Database Models & Alembic Migration | IN PROGRESS | `backend/app/models/memory.py`, migration | `ProjectMemory`, `MemoryAuditLog`, and enhanced `Artifact` schema |
+| V1.3-M3 | V1.3 | Core Memory & Artifact Intelligence Services | PLANNED | `MemoryService`, `ArtifactIntelligenceService` | CRUD, provenance scoring, audit logging, conflict detection |
+| V1.3-M4 | V1.3 | Modular Knowledge Retrieval Engine | PLANNED | `KnowledgeRetrievalEngine` | Full-text search, recency scoring, category filters, context budget formatter (max 4000 chars) |
+| V1.3-M5 | V1.3 | LangGraph Workflow Memory Integration | PLANNED | `workflow_graph.py`, `runner.py` | Pre-execution retrieval (`project_context_package`) and post-execution ingestion of verified memories |
+| V1.3-M6 | V1.3 | REST APIs & Schemas | PLANNED | `backend/app/api/v1/memories.py`, `artifacts.py` | REST endpoints for memories, lineage, and conflict resolution |
+| V1.3-M7 | V1.3 | Frontend Project Intelligence Experience | PLANNED | `frontend/src/pages/IntelligencePage.tsx` | Interactive Memory Bank, provenance badges, conflict resolver, artifact lineage |
+| V1.3-M8 | V1.3 | Multi-Execution Real Integration & Live Proof | PLANNED | `test_memory_intelligence.py`, live proof | Live demonstration of knowledge reuse across separate executions |
