@@ -354,3 +354,35 @@
   - Full backend regression suite: 40/40 tests passing (7.13s).
   - Ruff check & format: 100% clean across all 64 backend files.
   - Frontend verification: 8/8 test suites passing (10 tests), 0 Oxlint warnings, production bundle clean.
+
+### Milestone M1.3-3: Core Memory & Artifact Intelligence Services
+- **Service Implementations:**
+  - `backend/app/services/memory_audit_service.py`:
+    - Append-only audit logger flushing within callers' transactions (`record_action`).
+    - Immutability guards raising `PermissionError` on `update()`, `update_log()`, `delete()`, and `delete_log()`.
+    - Project-scoped query methods: `list_by_memory` (chronological order) and `list_by_project` (reverse chronological).
+  - `backend/app/services/memory_service.py`:
+    - Full CRUD with strict project isolation.
+    - Policy weights: `user_provided` (1.0), `verified_finding` (0.95), `agent_conclusion` (0.70), `assumption` (0.50).
+    - Concurrency protection: `expected_revision` optimistic concurrency check paired with `SELECT ... FOR UPDATE` row locks to prevent simultaneous read-modify-write race conditions.
+    - Immutable revision chains: `revision + 1` linked via `previous_revision_id`, marking current row `SUPERSEDED`. Automatic verification invalidation upon text modification.
+    - Duplicate detection (re-activates or returns matching active row) and conflict detection (identical summary with divergent content flagged `conflict_status = DETECTED`).
+    - Deterministic conflict resolution: `supersede`, `reject`, and `merge` strategies.
+    - Verification workflow (`verify_memory`) upgrading conclusions to findings with actor attribution.
+    - Soft-delete (`archive_memory`/`restore_memory`) and hard-delete (`delete_memory(hard_delete=True)`) preserving audit trail.
+  - `backend/app/services/artifact_intelligence_service.py`:
+    - Project-scoped artifact retrieval and manipulation (`get_artifact`, `_require_artifact`).
+    - Multi-hop ancestry cycle prevention in `set_parent` via visited set graph traversal.
+    - Cross-project boundary rejection (`ValueError("Cross-project artifact lineage is prohibited")`).
+    - Supersession version progression validation (`target.version > artifact.version`) and cycle detection in `set_superseded_by`.
+    - Comprehensive lineage traversal (`get_lineage` returning ancestors, descendants via BFS, superseding and superseded artifacts).
+    - Verification state updates (`update_verification_status`).
+- **Testing & Quality Assurance:**
+  - `backend/tests/test_memory_services.py`: 7 integration tests covering CRUD, provenance scoring, optimistic concurrency, concurrent race conditions, conflict resolution, audit immutability, and lifecycle transitions.
+  - `backend/tests/test_artifact_intelligence.py`: 6 integration tests covering project scoping, lineage traversal, self/multi-hop cycle rejection, cross-project rejection, version progression, and verification updates.
+  - Test results: 13/13 new service tests passing (1.02s). Full regression: 53/53 tests passing (7.23s).
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 69 backend files.
+  - Frontend: 8/8 test suites (10 tests) passing, 0 Oxlint warnings/errors, clean Vite build.
+- **Documentation:**
+  - Authored `docs/V1_3_M3_RELEASE_REPORT.md`.
+  - Updated `docs/PROGRESS.md` and `docs/EXECUTION_LOG.md`.
