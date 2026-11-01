@@ -9,6 +9,7 @@ from app.api.v1.artifacts import router as artifacts_router
 from app.api.v1.executions import router as executions_router
 from app.api.v1.health import router as health_router
 from app.api.v1.intelligence import router as intelligence_router
+from app.api.v1.orchestrator import router as orchestrator_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.workflows import router as workflows_router
@@ -49,6 +50,7 @@ app.add_middleware(
 
 # API Routers
 app.include_router(health_router, prefix="/api/v1")
+app.include_router(orchestrator_router, prefix="/api/v1")
 app.include_router(projects_router, prefix="/api/v1")
 app.include_router(tasks_router, prefix="/api/v1")
 app.include_router(workflows_router, prefix="/api/v1")

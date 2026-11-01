@@ -1,0 +1,19 @@
+from typing import Any, TypedDict
+
+
+class OrchestrationState(TypedDict, total=False):
+    execution_id: str
+    project_id: str
+    objective: str
+    studio_type: str
+    plan: dict[str, Any]
+    current_task_index: int
+    tasks: list[dict[str, Any]]
+    completed_task_ids: list[str]
+    active_approval_id: str | None
+    is_paused: bool
+    status: str
+    verification_results: list[dict[str, Any]]
+    artifacts: list[dict[str, Any]]
+    usage_records: list[dict[str, Any]]
+    error: str | None

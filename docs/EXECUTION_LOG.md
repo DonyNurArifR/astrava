@@ -79,3 +79,19 @@
   5. Live execution verified: Exit code 0, canonical model `claude-haiku-5-5`, tokens: 4 in / 288 out, duration: 6763ms, cost: $0.00366.
 - **Status:** VERIFIED
 - **Next Task:** M4: Orchestration Engine (Structured Planning, LangGraph Workflow, Checkpointing).
+
+## [2026-11-01] M4, M5, M6: Orchestration Engine, Approvals, Verification & Artifacts Complete
+- **Task ID:** M4-T1 to M6-T1
+- **Milestone:** M4, M5, M6
+- **Executor:** Antigravity / Gemini Planner
+- **Model:** Gemini 3.8 Flash
+- **Actions Taken:**
+  1. Implemented structured planner (`PlannerService`) with strict Pydantic v2 validation (`StructuredPlan`, `PlannedTask`) tailored for SaaS Studio and Media Studio production pipelines.
+  2. Implemented LangGraph state graph (`build_orchestrator_graph`) with typed state `OrchestrationState`, connecting `plan`, `approval_check`, `dispatch_task`, `verify`, `artifact`, and `complete` nodes with conditional routing.
+  3. Integrated deterministic verification engine (`VerificationEngine`) capturing syntax checks, test execution, and workspace Git diffs.
+  4. Implemented human-in-the-loop approval interrupt and resumption mechanism in `OrchestrationRunner`.
+  5. Implemented artifact storage management with strict path traversal validation (`ArtifactService.sanitize_path`) and file preview/download endpoints.
+  6. Verified through automated test suite (`tests/test_orchestrator.py`), confirming that tasks requiring approval properly transition execution state to `waiting_approval` and resume seamlessly to `completed` upon human approval.
+  7. All 14 tests passing, zero lint errors.
+- **Status:** VERIFIED
+- **Next Task:** M7: ASTRAVA Enterprise Dashboard & M8: SaaS & Media Studios frontend views.

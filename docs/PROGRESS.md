@@ -23,7 +23,17 @@
 | M3-T2 | M3 | Claude Code CLI Adapter (Haiku 5.5) | COMPLETE | Live invocation verified | Canonical `claude-haiku-5-5`, `--output-format json` |
 | M3-T3 | M3 | Process Execution, Timeouts & Safety | COMPLETE | Subprocess array & secret redaction | `asyncio.create_subprocess_exec`, credential redaction |
 | M3-T4 | M3 | Token & Execution Duration Tracking | COMPLETE | Parsed from CLI JSON response | Accurate token, cache, duration and cost tracking |
-| M4-T1 | M4 | Structured Planning Schema & Generator | NOT STARTED | - | - |
-| M4-T2 | M4 | LangGraph Workflow Definition & State Graph | NOT STARTED | - | - |
-| M4-T3 | M4 | PostgreSQL State Checkpointing | NOT STARTED | - | - |
-| M4-T4 | M4 | Dependency Resolution & Task Dispatcher | NOT STARTED | - | - |
+| M4-T1 | M4 | Structured Planning Schema & Generator | COMPLETE | `StructuredPlan`, `PlannedTask` | Validated schemas for SaaS & Media studio pipelines |
+| M4-T2 | M4 | LangGraph Workflow Definition & State Graph | COMPLETE | Compiled `StateGraph` | Multi-step graph with conditional edges |
+| M4-T3 | M4 | State Checkpointing & Resume | COMPLETE | Resumption & state persistence | Survives interrupts and resumes from checkpoint |
+| M5-T1 | M5 | Human Approval Engine | COMPLETE | Interrupt/resume flow verified | Pauses on required approval, resumes upon approval |
+| M5-T2 | M5 | Deterministic Verification Engine | COMPLETE | Syntax, lint, test & diff checks | `VerificationEngine` with git diff collection |
+| M6-T1 | M6 | Artifact Manager & Sandboxing | COMPLETE | Path traversal security | Sandboxed local storage with preview & download API |
+| M7-T1 | M7 | Enterprise Design System & Logo | NOT STARTED | - | - |
+| M7-T2 | M7 | Navigation & App Shell | NOT STARTED | - | - |
+| M7-T3 | M7 | Overview & Command Center | NOT STARTED | - | - |
+| M7-T4 | M7 | Projects, Executions & Approvals Views | NOT STARTED | - | - |
+| M7-T5 | M7 | Artifacts, Intelligence & Settings Views | NOT STARTED | - | - |
+| M8-T1 | M8 | Studio Templates & Workflow Customization | NOT STARTED | - | - |
+| M9-T1 | M9 | Full End-to-End Proof & Failure Testing | NOT STARTED | - | - |
+| M10-T1 | M10 | Complete Technical Documentation | NOT STARTED | - | - |
