@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     ]
 
     # Database URLs
-    DATABASE_URL: str = "postgresql+asyncpg://astrava:astrava_dev_password@localhost:5432/astrava"
-    DATABASE_URL_SYNC: str = "postgresql://astrava:astrava_dev_password@localhost:5432/astrava"
+    DATABASE_URL: str = "postgresql+asyncpg://astrava:astrava_dev_password@localhost:5433/astrava"
+    DATABASE_URL_SYNC: str = "postgresql://astrava:astrava_dev_password@localhost:5433/astrava"
 
     # Storage paths
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent

@@ -45,3 +45,18 @@
   6. Verified backend linting (`ruff check`) and tests (`pytest` 3/3 passed).
 - **Status:** VERIFIED
 - **Next Task:** M1-T7: Git commit initial verified foundation and push to origin `main`.
+
+## [2026-11-01] M2: Domain Models, Alembic Migrations & REST API Complete
+- **Task ID:** M2-T1 to M2-T4
+- **Milestone:** M2
+- **Executor:** Antigravity / Gemini Planner
+- **Model:** Gemini 3.8 Flash
+- **Actions Taken:**
+  1. Started PostgreSQL 16 Alpine container on port 5433 via Docker Compose (avoiding conflicts with existing host services).
+  2. Implemented SQLAlchemy 2.0 async domain models: `Workspace`, `Project`, `Task`, `Workflow`, `WorkflowExecution`, `ExecutionEvent`, `Approval`, `Artifact`, `ModelExecution`.
+  3. Configured Alembic with `env.py`, generated initial migration `a229466e8dae_initial_astrava_domain_schema.py`, and applied it cleanly.
+  4. Implemented Pydantic v2 schemas and asynchronous Service layer for each domain with validation and path sandboxing.
+  5. Built API endpoints under `/api/v1/` for projects, tasks, workflows, executions, approvals, artifacts, and intelligence.
+  6. Verified through automated tests (`tests/test_domain_api.py`) and Ruff linting (all checks passed, 6/6 tests passing).
+- **Status:** VERIFIED
+- **Next Task:** M3: Provider Integrations (Claude Code CLI Haiku 5.5 Adapter).
