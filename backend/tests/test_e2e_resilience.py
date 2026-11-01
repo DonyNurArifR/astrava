@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from unittest.mock import AsyncMock, patch
 
@@ -6,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 from app.models.approval import ApprovalStatus
+from app.orchestrator.runner import _execution_semaphore
 from app.providers.base import ProviderResponse, ProviderStatus
 from app.services.artifact_service import ArtifactService
 
@@ -301,3 +303,129 @@ async def test_pipeline_state_recovery_across_engine_restart():
             )
             assert resume_res.status_code == 200
             assert resume_res.json()["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_resumes_and_concurrency_resilience():
+    """Verify that simultaneous resume requests do not cause race conditions or duplicate task executions."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Create media project (reaches approval checkpoint)
+        p_res = await client.post(
+            "/api/v1/projects",
+            json={
+                "name": "Simultaneous Resumes Test Project",
+                "description": "Validates race protection under concurrent HTTP resume requests",
+                "studio_type": "media",
+            },
+        )
+        assert p_res.status_code == 201
+        project_id = p_res.json()["id"]
+
+        mock_resp = ProviderResponse(
+            status=ProviderStatus.SUCCESS,
+            output_text="# Media Script Output\nConcurrent execution result.\n",
+            exit_code=0,
+            duration_ms=400,
+        )
+
+        with patch(
+            "app.providers.claude_code.ClaudeCodeCLIProvider.execute", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_resp
+
+            # Execute pipeline to waiting_approval
+            exec_res = await client.post(
+                "/api/v1/orchestrator/execute",
+                json={
+                    "project_id": project_id,
+                    "objective": "High concurrency simultaneous resume verification",
+                    "studio_type": "media",
+                },
+            )
+            assert exec_res.status_code == 202
+            exec_id = exec_res.json()["id"]
+
+            tasks_before = (await client.get(f"/api/v1/tasks/project/{project_id}")).json()
+            num_tasks_before = len(tasks_before)
+
+            # Fire 3 concurrent resume requests at the exact same moment
+            resume_coros = [
+                client.post(
+                    f"/api/v1/orchestrator/resume/{exec_id}",
+                    json={
+                        "decision": ApprovalStatus.APPROVED.value,
+                        "reason": f"Simultaneous approver #{i}",
+                        "decided_by": f"Operator_{i}",
+                    },
+                )
+                for i in range(3)
+            ]
+            results = await asyncio.gather(*resume_coros)
+
+            # All 3 responses should succeed with 200 OK
+            for res in results:
+                assert res.status_code == 200
+                assert res.json()["status"] == "completed"
+
+            # Verify tasks count: exactly equal to planned count (no duplicates!)
+            tasks_after = (await client.get(f"/api/v1/tasks/project/{project_id}")).json()
+            assert len(tasks_after) == num_tasks_before
+
+            # Verify semaphore is released and capacity is 1
+            assert _execution_semaphore._value == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_and_persistence():
+    """Verify that a provider execution failure transitions execution to FAILED and persists details."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Create project
+        p_res = await client.post(
+            "/api/v1/projects",
+            json={"name": "Failure Simulation Project", "studio_type": "saas"},
+        )
+        assert p_res.status_code == 201
+        project_id = p_res.json()["id"]
+
+        fail_resp = ProviderResponse(
+            status=ProviderStatus.FAILED,
+            output_text="",
+            exit_code=1,
+            duration_ms=500,
+            error_message="Simulated Claude Code execution crash: API connection refused",
+        )
+
+        with patch(
+            "app.providers.claude_code.ClaudeCodeCLIProvider.execute", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = fail_resp
+
+            exec_res = await client.post(
+                "/api/v1/orchestrator/execute",
+                json={
+                    "project_id": project_id,
+                    "objective": "Build crash-tested payment module",
+                    "studio_type": "saas",
+                },
+            )
+            assert exec_res.status_code == 202
+            exec_data = exec_res.json()
+            assert exec_data["status"] == "failed"
+            assert "Simulated Claude Code execution crash" in exec_data["error_message"]
+
+            # Verify persisted execution in DB
+            db_exec = await client.get(f"/api/v1/executions/{exec_data['id']}")
+            assert db_exec.status_code == 200
+            assert db_exec.json()["status"] == "failed"
+
+            # Verify failed task in DB
+            tasks = (await client.get(f"/api/v1/tasks/project/{project_id}")).json()
+            assert len(tasks) > 0
+            failed_task = tasks[0]
+            assert failed_task["status"] == "failed"
+            assert "Simulated Claude Code execution crash" in failed_task["error_details"]
+
+            # Verify backend remains operational and healthy
+            health = await client.get("/api/v1/healthz")
+            assert health.status_code == 200
+            assert health.json()["status"] == "healthy"

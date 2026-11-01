@@ -235,8 +235,8 @@ export const ExecutionsPage: React.FC = () => {
                 </h4>
                 <div className="bg-slate-950 text-slate-300 rounded-lg p-3 font-mono text-[11px] space-y-1.5 max-h-64 overflow-y-auto border border-slate-800">
                   {selectedExecution.events && selectedExecution.events.length > 0 ? (
-                    selectedExecution.events.map(ev => (
-                      <div key={ev.id} className="flex items-start gap-2">
+                    selectedExecution.events.map((ev, i) => (
+                      <div key={ev.id || `${ev.event_type}-${i}`} className="flex items-start gap-2">
                         <span className="text-slate-500 shrink-0">
                           [{new Date(ev.created_at).toLocaleTimeString()}]
                         </span>

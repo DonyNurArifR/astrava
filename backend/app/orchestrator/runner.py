@@ -162,6 +162,13 @@ class OrchestrationRunner:
         # Resume LangGraph execution from approved task with concurrency semaphore
         graph = build_orchestrator_graph()
         async with _execution_semaphore:
+            # Re-check execution status inside semaphore to prevent race under simultaneous resume calls
+            fresh_exec = await WorkflowService.get_execution(db, execution_id)
+            if fresh_exec and fresh_exec.status in [
+                ExecutionStatus.COMPLETED,
+                ExecutionStatus.CANCELLED,
+            ]:
+                return fresh_exec
             final_state = await graph.ainvoke(state)
 
         await OrchestrationRunner._sync_state_to_db(
@@ -195,7 +202,7 @@ class OrchestrationRunner:
         for t in tasks:
             task_key = t.get("task_id", "")
             if task_key in task_db_ids:
-                # Task already exists in DB; update status if completed
+                # Task already exists in DB; update status if completed or failed
                 existing_db_id = uuid.UUID(task_db_ids[task_key])
                 if task_key in completed_ids:
                     await TaskService.update(
@@ -204,6 +211,15 @@ class OrchestrationRunner:
                         TaskUpdate(
                             status=TaskStatus.COMPLETED,
                             output_data={"result": t.get("output_text", "")},
+                        ),
+                    )
+                elif t.get("status") == "failed" or t.get("exit_code", 0) != 0:
+                    await TaskService.update(
+                        db,
+                        existing_db_id,
+                        TaskUpdate(
+                            status=TaskStatus.FAILED,
+                            error_details=t.get("error_message", "Task execution failed"),
                         ),
                     )
             else:
@@ -229,6 +245,15 @@ class OrchestrationRunner:
                         TaskUpdate(
                             status=TaskStatus.COMPLETED,
                             output_data={"result": t.get("output_text", "")},
+                        ),
+                    )
+                elif t.get("status") == "failed" or t.get("exit_code", 0) != 0:
+                    await TaskService.update(
+                        db,
+                        t_obj.id,
+                        TaskUpdate(
+                            status=TaskStatus.FAILED,
+                            error_details=t.get("error_message", "Task execution failed"),
                         ),
                     )
         state["task_db_ids"] = task_db_ids
@@ -317,6 +342,21 @@ class OrchestrationRunner:
             )
             await WorkflowService.record_event(
                 db, execution_id, "pipeline_completed", {"tasks_count": len(tasks)}
+            )
+        elif state_status == "failed":
+            await WorkflowService.update_execution_status(
+                db,
+                execution_id,
+                ExecutionStatus.FAILED,
+                state_data=state,
+                current_step=current_step,
+                error_message=state.get("error", "Task execution failed"),
+            )
+            await WorkflowService.record_event(
+                db,
+                execution_id,
+                "pipeline_failed",
+                {"error": state.get("error", "Task execution failed")},
             )
         else:
             await WorkflowService.update_execution_status(

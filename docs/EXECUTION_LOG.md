@@ -164,3 +164,43 @@
 - **Live Haiku CLI:** Successfully invoked and verified `canonicalModel: claude-haiku-5-5`.
 - **Database Durability:** `test_pipeline_state_recovery_across_engine_restart` verified checkpoint survival across engine connection pool disposal.
 - **Final Result:** ASTRAVA V1.1 is fully audited, hardened, verified, and ready for release.
+
+---
+
+## 2026-11-01: ASTRAVA V1.1.1 — Post-Release Acceptance Verification
+
+### Controlled Crash Recovery Verification
+- Executed `scratch/test_real_crash_recovery.py` spawning a dedicated Uvicorn backend process (PID 53879) on port 8009.
+- Ran live Media Studio pipeline with real Claude Code CLI (`claude-haiku-5-5`) tasks 1 and 2 and deterministic verification.
+- Execution reached checkpoint: `WAITING_APPROVAL` with 3 tasks recorded in PostgreSQL.
+- Abruptly killed Process 1 with `kill -9` (`killpg 53879`).
+- Confirmed process termination (`kill -0` confirmed dead).
+- Spawned a brand-new Uvicorn process (PID 54535) on port 8009.
+- Verified `/healthz` on the new process.
+- Retrieved execution `8c4a8a70-...` on the new process: confirmed checkpoint state restored with `waiting_approval` status and preserved plan.
+- Resumed execution with approval on the new process.
+- Process 2 loaded state, preserved plan, and dispatched Task 3 using live Claude Code CLI with `claude-haiku-5-5`.
+- Workflow reached `COMPLETED`.
+- Post-recovery DB check: exactly 3 tasks (pre-crash: 3, 0 duplicate tasks), 4 artifacts registered.
+- Status: VERIFIED.
+
+### Concurrency & Idempotency Hardening
+- Added in-semaphore state re-check in `runner.py:resume_pipeline` to serialize concurrent resume requests and eliminate race conditions.
+- Implemented `test_simultaneous_resumes_and_concurrency_resilience`: 3 simultaneous resume requests fired via `asyncio.gather` all succeeded with HTTP 200, execution completed with zero duplicate tasks, and semaphore capacity restored (`_value == 1`).
+- Documented single-process concurrency limitation of `asyncio.Semaphore`.
+
+### Provider Failure Routing & Persistence
+- Added conditional edge `route_after_dispatch` in `workflow_graph.py` to route failed/timed-out tasks immediately to `END`.
+- Updated `runner._sync_state_to_db` to record failed tasks with `TaskStatus.FAILED` and transition `WorkflowExecution` to `ExecutionStatus.FAILED` with error details.
+- Verified with `test_provider_failure_and_persistence`: execution and task transitioned to FAILED, error details persisted, backend remained healthy.
+
+### Frontend Acceptance Suites
+- Expanded Vitest suites from 4 to 7 test suites: added `ApprovalsPage.test.tsx`, `ArtifactsPage.test.tsx`, and `ExecutionsPage.test.tsx`.
+- All 7 test suites passing in 800ms.
+- Oxlint: 0 warnings, 0 errors across 27 files.
+- Vite build: clean in 202ms.
+
+### Final Assessment & Recommendation
+- Comprehensive report generated in `docs/V1_1_1_ACCEPTANCE_REPORT.md`.
+- Executive Assessment: **B. Release accepted with documented limitations.**
+- Recommendation: **Freeze V1.1 / V1.1.1 as the verified stable baseline for the next product-development phase.**

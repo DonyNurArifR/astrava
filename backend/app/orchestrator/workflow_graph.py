@@ -7,7 +7,7 @@ from app.config import settings
 from app.models.project import StudioType
 from app.orchestrator.planner import PlannerService
 from app.orchestrator.state import OrchestrationState
-from app.providers.base import ProviderRequest
+from app.providers.base import ProviderRequest, ProviderStatus
 from app.providers.factory import ProviderFactory
 from app.verification.engine import VerificationEngine
 
@@ -109,9 +109,21 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
     current_task["output_text"] = resp.output_text
     current_task["exit_code"] = resp.exit_code
 
+    if resp.status in (ProviderStatus.FAILED, ProviderStatus.TIMEOUT):
+        error_msg = resp.error_message or "Task execution failed"
+        current_task["status"] = "failed"
+        current_task["error_message"] = error_msg
+        return {
+            "tasks": tasks,
+            "usage_records": usage_list,
+            "status": "failed",
+            "error": error_msg,
+        }
+
     return {
         "tasks": tasks,
         "usage_records": usage_list,
+        "status": "running",
     }
 
 
@@ -184,6 +196,12 @@ def route_after_approval_check(state: OrchestrationState) -> Literal["dispatch_t
     return "dispatch_task"
 
 
+def route_after_dispatch(state: OrchestrationState) -> Literal["verify", "__end__"]:
+    if state.get("status") == "failed":
+        return "__end__"
+    return "verify"
+
+
 def route_after_artifact(state: OrchestrationState) -> Literal["approval_check", "complete"]:
     tasks = state.get("tasks", [])
     idx = state.get("current_task_index", 0)
@@ -215,7 +233,14 @@ def build_orchestrator_graph():
         },
     )
 
-    workflow.add_edge("dispatch_task", "verify")
+    workflow.add_conditional_edges(
+        "dispatch_task",
+        route_after_dispatch,
+        {
+            "verify": "verify",
+            "__end__": END,
+        },
+    )
     workflow.add_edge("verify", "artifact")
 
     workflow.add_conditional_edges(

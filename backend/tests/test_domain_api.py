@@ -83,6 +83,14 @@ async def test_artifact_registration_and_retrieval():
         )
         project_id = p_res.json()["id"]
 
+        # Write actual file to test preview and download endpoints
+        from app.config import settings
+
+        work_dir = settings.ARTIFACT_STORAGE_PATH / str(project_id)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        file_path = work_dir / "system_design.md"
+        file_path.write_text("# System Architecture Design\nVerified content.\n", encoding="utf-8")
+
         # Register artifact
         art_payload = {
             "project_id": project_id,
@@ -96,12 +104,25 @@ async def test_artifact_registration_and_retrieval():
         assert art_res.status_code == 201
         art_data = art_res.json()
         assert art_data["name"] == "system_design.md"
-        assert art_data["id"] is not None
+        art_id = art_data["id"]
 
         # List project artifacts
         list_art = await client.get(f"/api/v1/artifacts/project/{project_id}")
         assert list_art.status_code == 200
         assert len(list_art.json()) >= 1
+
+        # Test preview
+        preview_res = await client.get(f"/api/v1/artifacts/{art_id}/preview")
+        assert preview_res.status_code == 200
+        assert "# System Architecture Design" in preview_res.text
+
+        # Test download
+        download_res = await client.get(f"/api/v1/artifacts/{art_id}/download")
+        assert download_res.status_code == 200
+        assert "attachment" in download_res.headers.get(
+            "content-disposition", ""
+        ).lower() or "system_design.md" in download_res.headers.get("content-disposition", "")
+        assert b"System Architecture Design" in download_res.content
 
 
 @pytest.mark.asyncio

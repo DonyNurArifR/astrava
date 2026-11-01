@@ -47,3 +47,8 @@
 | V1.1-F7 | V1.1 | Elimination of Frontend Oxlint Warnings | COMPLETE | `npm run lint` (0 warnings, 0 errors) | Fast Refresh context separation, useTheme hook file, useCallback fetchers |
 | V1.1-E1 | V1.1 | Engine Restart State Persistence & Recovery Test | COMPLETE | `test_pipeline_state_recovery_across_engine_restart` | Checkpoint persistence verified across DB connection pool reboot |
 | V1.1-R1 | V1.1 | V1.1 Release Delivery Report & Synchronized Push | COMPLETE | `docs/V1_1_RELEASE_REPORT.md` | Verified release report, clean git tree, pushed to origin/main |
+| V1.1.1-P1 | V1.1.1 | Real Abrupt Process Crash Recovery Verification | COMPLETE | `scratch/test_real_crash_recovery.py` | Controlled SIGKILL on real Uvicorn; new process restored checkpoint & completed |
+| V1.1.1-P2 | V1.1.1 | Simultaneous Resumes & In-Semaphore State Re-check | COMPLETE | `test_simultaneous_resumes_and_concurrency_resilience` | In-semaphore execution check prevents race condition under concurrent resume |
+| V1.1.1-P3 | V1.1.1 | Provider Failure Conditional Routing & State Persistence | COMPLETE | `test_provider_failure_and_persistence` | `route_after_dispatch` conditional edge, execution marked FAILED with error details |
+| V1.1.1-P4 | V1.1.1 | Expanded Frontend Acceptance Suites (7 test suites) | COMPLETE | `npm test` (7 passed in 800ms) | Added ApprovalsPage, ArtifactsPage, ExecutionsPage test suites |
+| V1.1.1-P5 | V1.1.1 | Post-Release Acceptance Report & Baseline Recommendation | COMPLETE | `docs/V1_1_1_ACCEPTANCE_REPORT.md` | Full acceptance report with evidence matrix & freeze recommendation |
