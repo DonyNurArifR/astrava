@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: astrava-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: astrava
+      POSTGRES_PASSWORD: astrava_dev_password
+      POSTGRES_DB: astrava
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astrava -d astrava"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local
