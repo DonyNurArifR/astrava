@@ -6,7 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from app.main import app
 from app.models.approval import ApprovalStatus
 from app.models.project import StudioType
-from app.orchestrator.planner import PlannerService
+from app.orchestrator.planner import PlannedTask, PlannerService
 from app.providers.base import ProviderResponse, ProviderStatus
 
 
@@ -17,11 +17,18 @@ def test_saas_plan_generation():
         studio_type=StudioType.SAAS,
     )
     assert plan.project_id == "test-proj-1"
-    assert len(plan.tasks) == 4
-    assert plan.tasks[0].task_id == "task-1-prd"
-    assert plan.tasks[1].task_id == "task-2-arch"
-    assert plan.tasks[2].task_id == "task-3-implementation"
-    assert plan.tasks[3].task_id == "task-4-qa"
+    assert len(plan.tasks) == 7
+    assert plan.tasks[0].task_id == "task-1-market-research"
+    assert plan.tasks[0].assigned_agent_slug == "product-researcher"
+    assert plan.tasks[1].task_id == "task-2-competitor-analysis"
+    assert plan.tasks[1].assigned_agent_slug == "competitor-analyst"
+    assert plan.tasks[2].task_id == "task-3-product-strategy"
+    assert plan.tasks[3].task_id == "task-4-prd"
+    assert plan.tasks[4].task_id == "task-5-architecture"
+    assert plan.tasks[5].task_id == "task-6-implementation"
+    assert plan.tasks[6].task_id == "task-7-qa"
+    assert plan.is_valid_dag is True
+    assert len(plan.execution_stages) == 6
 
 
 def test_media_plan_generation():
@@ -31,11 +38,20 @@ def test_media_plan_generation():
         studio_type=StudioType.MEDIA,
     )
     assert plan.project_id == "test-proj-2"
-    assert len(plan.tasks) == 3
-    assert plan.tasks[0].task_id == "task-1-content-strategy"
-    assert plan.tasks[1].task_id == "task-2-scriptwriting"
-    assert plan.tasks[2].task_id == "task-3-publishing-prep"
-    assert plan.tasks[2].requires_approval is True
+    assert len(plan.tasks) == 8
+    assert plan.tasks[0].task_id == "task-1-content-research"
+    assert plan.tasks[1].task_id == "task-2-audience-analysis"
+    assert plan.tasks[7].task_id == "task-8-quality-review"
+    assert plan.tasks[7].requires_approval is True
+    assert plan.is_valid_dag is True
+    assert len(plan.execution_stages) == 6
+
+
+def test_dag_cycle_detection():
+    t1 = PlannedTask(task_id="t1", title="Task 1", description="", dependencies=["t2"])
+    t2 = PlannedTask(task_id="t2", title="Task 2", description="", dependencies=["t1"])
+    with pytest.raises(ValueError, match="Circular dependency detected"):
+        PlannerService.validate_and_compute_stages([t1, t2])
 
 
 @pytest.mark.asyncio
@@ -60,7 +76,26 @@ async def test_orchestrator_plan_endpoint():
         assert plan_res.status_code == 200
         plan = plan_res.json()
         assert plan["project_id"] == project_id
-        assert len(plan["tasks"]) == 4
+        assert len(plan["tasks"]) == 7
+        assert len(plan["execution_stages"]) == 6
+        assert plan["is_valid_dag"] is True
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_understand_endpoint():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.post(
+            "/api/v1/orchestrator/understand",
+            json={
+                "objective": "Build automated invoice parser with anomaly detection",
+                "studio_type": "saas",
+            },
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["studio"] == "saas"
+        assert len(data["required_capabilities"]) > 0
+        assert len(data["expected_deliverables"]) > 0
 
 
 @pytest.mark.asyncio
@@ -88,40 +123,37 @@ async def test_orchestrator_execution_and_approval_flow():
         ) as mock_exec:
             mock_exec.return_value = mock_resp
 
-            # Execute pipeline
+            # Trigger execution
             exec_res = await client.post(
                 "/api/v1/orchestrator/execute",
                 json={
                     "project_id": project_id,
-                    "objective": "Launch AI creator documentary series",
+                    "objective": "High risk content campaign",
                     "studio_type": "media",
                 },
             )
-            assert exec_res.status_code == 202
-            exec_data = exec_res.json()
-            execution_id = exec_data["id"]
+            assert exec_res.status_code in (200, 202)
+            execution = exec_res.json()
+            exec_id = execution["id"]
 
-            # Verify it paused for approval because task 3 requires approval
-            get_exec = await client.get(f"/api/v1/executions/{execution_id}")
-            assert get_exec.status_code == 200
-            current_status = get_exec.json()["status"]
-            assert current_status == "waiting_approval"
+            # Must pause on approval required task (task-8-quality-review)
+            assert execution["status"] == "waiting_approval"
 
-            # Check pending approvals
-            appr_res = await client.get("/api/v1/approvals?pending_only=true")
+            # Check pending approval list
+            appr_res = await client.get("/api/v1/approvals/pending")
             assert appr_res.status_code == 200
             pending = appr_res.json()
             assert len(pending) >= 1
 
-            # Resume with approval
+            # Resume by approving
             resume_res = await client.post(
-                f"/api/v1/orchestrator/resume/{execution_id}",
+                f"/api/v1/orchestrator/executions/{exec_id}/resume",
                 json={
-                    "decision": ApprovalStatus.APPROVED.value,
-                    "reason": "Content verified by lead producer",
-                    "decided_by": "Abstract",
+                    "decision": ApprovalStatus.APPROVED,
+                    "reason": "Authorized release",
+                    "decided_by": "qa_lead",
                 },
             )
             assert resume_res.status_code == 200
-            resumed_data = resume_res.json()
-            assert resumed_data["status"] == "completed"
+            resumed = resume_res.json()
+            assert resumed["status"] == "completed"

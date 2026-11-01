@@ -72,5 +72,6 @@ frontend/out/
 storage/artifacts/*
 !storage/artifacts/.gitkeep
 postgres_data/
+scratch/
 *.sqlite3
 *.db

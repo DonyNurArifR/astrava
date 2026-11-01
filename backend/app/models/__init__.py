@@ -1,4 +1,5 @@
 from app.db.base import Base, TimestampMixin, UUIDMixin
+from app.models.agent import Agent
 from app.models.approval import Approval, ApprovalStatus
 from app.models.artifact import Artifact, ArtifactType
 from app.models.execution import ExecutionEvent, ExecutionStatus, WorkflowExecution
@@ -12,6 +13,7 @@ __all__ = [
     "Base",
     "UUIDMixin",
     "TimestampMixin",
+    "Agent",
     "Workspace",
     "Project",
     "ProjectStatus",

@@ -1,3 +1,5 @@
+import asyncio
+import json
 import logging
 from typing import Any, Literal
 
@@ -5,13 +7,17 @@ from langgraph.graph import END, StateGraph
 
 from app.config import settings
 from app.models.project import StudioType
+from app.models.task import ExecutorType
 from app.orchestrator.planner import PlannerService
 from app.orchestrator.state import OrchestrationState
 from app.providers.base import ProviderRequest, ProviderStatus
 from app.providers.factory import ProviderFactory
+from app.services.agent_service import DEFAULT_AGENTS
 from app.verification.engine import VerificationEngine
 
 logger = logging.getLogger("astrava.orchestrator")
+
+AGENT_MAP = {a["slug"]: a for a in DEFAULT_AGENTS}
 
 
 async def plan_node(state: OrchestrationState) -> dict[str, Any]:
@@ -34,65 +40,133 @@ async def plan_node(state: OrchestrationState) -> dict[str, Any]:
     return {
         "plan": plan.model_dump(),
         "tasks": tasks,
-        "current_task_index": 0,
         "completed_task_ids": [],
+        "current_ready_task_ids": [],
+        "current_task_index": 0,
         "status": "running",
     }
 
 
 async def approval_check_node(state: OrchestrationState) -> dict[str, Any]:
     tasks = state.get("tasks", [])
-    idx = state.get("current_task_index", 0)
+    completed_ids = set(state.get("completed_task_ids", []))
 
-    if idx >= len(tasks):
+    # All tasks completed
+    if len(completed_ids) == len(tasks) and len(tasks) > 0:
         return {"status": "completed"}
 
-    current_task = tasks[idx]
-    requires_approval = current_task.get("requires_approval", False)
+    # Find tasks whose dependencies are fully met and haven't run yet
+    ready_tasks = [
+        t
+        for t in tasks
+        if t["task_id"] not in completed_ids
+        and t.get("status") != "failed"
+        and all(dep in completed_ids for dep in t.get("dependencies", []))
+    ]
 
-    # Check if task was already approved via state
-    if requires_approval and not current_task.get("approved", False):
-        logger.info("Task '%s' requires human approval. Pausing execution.", current_task["title"])
-        return {
-            "status": "waiting_approval",
-            "active_approval_id": current_task["task_id"],
+    if not ready_tasks:
+        if state.get("status") == "failed":
+            return {"status": "failed"}
+        return {"status": "completed"}
+
+    # Check if ANY ready task requires human approval
+    for t in ready_tasks:
+        if t.get("requires_approval", False) and not t.get("approved", False):
+            logger.info("Task '%s' requires human approval. Pausing execution.", t["title"])
+            return {
+                "status": "waiting_approval",
+                "active_approval_id": t["task_id"],
+                "current_ready_task_ids": [t["task_id"]],
+            }
+
+    # Ready to execute ready tasks in parallel
+    ready_ids = [t["task_id"] for t in ready_tasks]
+    logger.info("Execution wave ready with %d task(s): %s", len(ready_ids), ready_ids)
+    return {
+        "status": "running",
+        "current_ready_task_ids": ready_ids,
+    }
+
+
+async def _execute_single_task(
+    task: dict[str, Any],
+    state: OrchestrationState,
+    project_work_dir: Any,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Executes a single task using its assigned agent instructions and upstream context."""
+    agent_slug = task.get("assigned_agent_slug", "developer")
+    agent_info = AGENT_MAP.get(agent_slug, {})
+    agent_name = agent_info.get("name", agent_slug)
+    agent_instructions = agent_info.get("instructions", "Execute the task meeting all criteria.")
+
+    # Gather upstream deliverables as context
+    upstream_context_blocks = []
+    task_lookup = {t["task_id"]: t for t in state.get("tasks", [])}
+    for dep_id in task.get("dependencies", []):
+        dep_task = task_lookup.get(dep_id, {})
+        dep_title = dep_task.get("title", dep_id)
+        dep_out = dep_task.get("output_text", "")
+        if dep_out:
+            upstream_context_blocks.append(
+                f"=== Deliverable from [{dep_title}] ===\n{dep_out[:2500]}"
+            )
+
+    upstream_text = (
+        "\n\n".join(upstream_context_blocks) if upstream_context_blocks else "None (Initial stage)."
+    )
+
+    # Deterministic task execution (e.g. QA engineer)
+    if task.get("executor_type") == ExecutorType.DETERMINISTIC:
+        report = await VerificationEngine.verify_task(project_work_dir)
+        output_text = json.dumps(report.model_dump(), indent=2)
+        task["output_text"] = output_text
+        task["status"] = "completed" if report.overall_passed else "failed"
+        task["exit_code"] = 0 if report.overall_passed else 1
+
+        usage = {
+            "task_id": task["task_id"],
+            "provider": "deterministic",
+            "model": "deterministic-engine",
+            "duration_ms": 50,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cost_usd": 0.0,
+            "status": "success" if report.overall_passed else "failed",
+            "exit_code": task["exit_code"],
         }
+        return task, usage
 
-    return {"status": "running"}
+    # Claude Code CLI Agent execution
+    prompt = f"""You are an autonomous AI Agent in the ASTRAVA platform.
+Agent Identity: {agent_name} ({agent_slug})
+Agent Responsibilities & Instructions:
+{agent_instructions}
 
+Project Context & Upstream Prerequisites:
+{upstream_text}
 
-async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
-    tasks = state.get("tasks", [])
-    idx = state.get("current_task_index", 0)
-    current_task = tasks[idx]
-    project_id = state.get("project_id", "default")
+Assigned Task: {task["title"]}
+Description: {task["description"]}
+Acceptance Criteria: {task.get("acceptance_criteria", [])}
+Expected Deliverables: {task.get("expected_output_artifacts", [])}
 
-    logger.info("Dispatching task %d/%d: %s", idx + 1, len(tasks), current_task["title"])
-
-    # Task working directory inside sandboxed project storage
-    project_work_dir = (settings.ARTIFACT_STORAGE_PATH / project_id).resolve()
-    project_work_dir.mkdir(parents=True, exist_ok=True)
+Produce the full deliverable meeting all criteria directly."""
 
     provider = ProviderFactory.get_provider("claude_code")
     req = ProviderRequest(
-        prompt=(
-            f"You are executing an autonomous ASTRAVA task.\n"
-            f"Task: {current_task['title']}\n"
-            f"Description: {current_task['description']}\n"
-            f"Acceptance Criteria: {current_task.get('acceptance_criteria', [])}\n"
-            f"Generate the required solution directly."
-        ),
+        prompt=prompt,
         working_directory=project_work_dir,
-        model=current_task.get("assigned_model", "haiku"),
+        model=task.get("assigned_model", "haiku"),
         timeout_seconds=settings.CLAUDE_EXECUTION_TIMEOUT_SECONDS,
     )
 
     resp = await provider.execute(req)
-
-    usage_record = {
-        "task_id": current_task["task_id"],
+    usage = {
+        "task_id": task["task_id"],
         "provider": "claude_code",
-        "model": resp.canonical_model or current_task.get("assigned_model", "claude-haiku-5-5"),
+        "model": resp.canonical_model or task.get("assigned_model", "claude-haiku-5-5"),
         "duration_ms": resp.duration_ms,
         "input_tokens": resp.input_tokens,
         "output_tokens": resp.output_tokens,
@@ -103,85 +177,130 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
         "exit_code": resp.exit_code,
     }
 
-    usage_list = list(state.get("usage_records", []))
-    usage_list.append(usage_record)
+    task["output_text"] = resp.output_text
+    task["exit_code"] = resp.exit_code
 
-    current_task["output_text"] = resp.output_text
-    current_task["exit_code"] = resp.exit_code
-
+    # Quality control: detect failed/timeout or empty output
     if resp.status in (ProviderStatus.FAILED, ProviderStatus.TIMEOUT):
-        error_msg = resp.error_message or "Task execution failed"
-        current_task["status"] = "failed"
-        current_task["error_message"] = error_msg
-        return {
-            "tasks": tasks,
-            "usage_records": usage_list,
-            "status": "failed",
-            "error": error_msg,
-        }
+        task["status"] = "failed"
+        task["error_message"] = resp.error_message or "Task execution failed"
+    elif not resp.output_text.strip():
+        task["status"] = "failed"
+        task["error_message"] = "Agent produced empty deliverable"
+    else:
+        task["status"] = "completed"
+
+    return task, usage
+
+
+async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
+    tasks = state.get("tasks", [])
+    ready_ids = state.get("current_ready_task_ids", [])
+    project_id = state.get("project_id", "default")
+    project_work_dir = (settings.ARTIFACT_STORAGE_PATH / project_id).resolve()
+    project_work_dir.mkdir(parents=True, exist_ok=True)
+
+    task_map = {t["task_id"]: t for t in tasks}
+    ready_tasks = [task_map[tid] for tid in ready_ids if tid in task_map]
+
+    logger.info("Dispatching %d task(s) concurrently in this stage", len(ready_tasks))
+
+    # Execute independent tasks concurrently via asyncio.gather
+    results = await asyncio.gather(
+        *[_execute_single_task(t, state, project_work_dir) for t in ready_tasks],
+        return_exceptions=True,
+    )
+
+    usage_list = list(state.get("usage_records", []))
+    any_failed = False
+    error_msg = None
+
+    for i, res in enumerate(results):
+        target_task = ready_tasks[i]
+        if isinstance(res, Exception):
+            logger.error("Task %s raised unhandled exception: %s", target_task["task_id"], res)
+            target_task["status"] = "failed"
+            target_task["error_message"] = str(res)
+            any_failed = True
+            error_msg = str(res)
+        else:
+            updated_task, usage = res
+            target_task.update(updated_task)
+            if usage:
+                usage_list.append(usage)
+            if target_task.get("status") == "failed":
+                any_failed = True
+                error_msg = target_task.get("error_message", "Task failed")
 
     return {
         "tasks": tasks,
         "usage_records": usage_list,
-        "status": "running",
+        "status": "failed" if any_failed else "running",
+        "error": error_msg,
     }
 
 
 async def verify_node(state: OrchestrationState) -> dict[str, Any]:
-    tasks = state.get("tasks", [])
-    idx = state.get("current_task_index", 0)
-    current_task = tasks[idx]
+    ready_ids = state.get("current_ready_task_ids", [])
     project_id = state.get("project_id", "default")
     project_work_dir = (settings.ARTIFACT_STORAGE_PATH / project_id).resolve()
 
-    logger.info("Running deterministic verification for task: %s", current_task["title"])
+    logger.info("Running deterministic verification for batch: %s", ready_ids)
     report = await VerificationEngine.verify_task(project_work_dir)
 
     results = list(state.get("verification_results", []))
-    results.append(
-        {
-            "task_id": current_task["task_id"],
-            "report": report.model_dump(),
-        }
-    )
+    for tid in ready_ids:
+        results.append(
+            {
+                "task_id": tid,
+                "report": report.model_dump(),
+            }
+        )
 
     return {"verification_results": results}
 
 
 async def artifact_node(state: OrchestrationState) -> dict[str, Any]:
     tasks = state.get("tasks", [])
-    idx = state.get("current_task_index", 0)
-    current_task = tasks[idx]
+    ready_ids = state.get("current_ready_task_ids", [])
     project_id = state.get("project_id", "default")
     project_work_dir = (settings.ARTIFACT_STORAGE_PATH / project_id).resolve()
 
-    # Register output artifacts
     artifacts = list(state.get("artifacts", []))
-    output_text = current_task.get("output_text", "")
-
-    for filename in current_task.get("expected_output_artifacts", []):
-        file_path = project_work_dir / filename
-        if output_text and not file_path.exists():
-            file_path.write_text(output_text, encoding="utf-8")
-
-        artifacts.append(
-            {
-                "task_id": current_task["task_id"],
-                "name": filename,
-                "file_path": f"{project_id}/{filename}",
-                "size_bytes": file_path.stat().st_size
-                if file_path.exists()
-                else len(output_text.encode()),
-            }
-        )
-
     completed_ids = list(state.get("completed_task_ids", []))
-    completed_ids.append(current_task["task_id"])
+    task_map = {t["task_id"]: t for t in tasks}
+
+    for tid in ready_ids:
+        task = task_map.get(tid)
+        if not task or task.get("status") != "completed":
+            continue
+
+        output_text = task.get("output_text", "")
+        agent_slug = task.get("assigned_agent_slug", "unknown")
+
+        for filename in task.get("expected_output_artifacts", []):
+            file_path = project_work_dir / filename
+            if output_text and not file_path.exists():
+                file_path.write_text(output_text, encoding="utf-8")
+
+            artifacts.append(
+                {
+                    "task_id": tid,
+                    "name": filename,
+                    "producing_agent_slug": agent_slug,
+                    "file_path": f"{project_id}/{filename}",
+                    "size_bytes": file_path.stat().st_size
+                    if file_path.exists()
+                    else len(output_text.encode()),
+                }
+            )
+
+        completed_ids.append(tid)
 
     return {
         "artifacts": artifacts,
         "completed_task_ids": completed_ids,
-        "current_task_index": idx + 1,
+        "current_ready_task_ids": [],
     }
 
 
@@ -202,12 +321,19 @@ def route_after_dispatch(state: OrchestrationState) -> Literal["verify", "__end_
     return "verify"
 
 
-def route_after_artifact(state: OrchestrationState) -> Literal["approval_check", "complete"]:
+def route_after_artifact(
+    state: OrchestrationState,
+) -> Literal["approval_check", "complete", "__end__"]:
+    if state.get("status") == "failed":
+        return "__end__"
+
     tasks = state.get("tasks", [])
-    idx = state.get("current_task_index", 0)
-    if idx < len(tasks):
-        return "approval_check"
-    return "complete"
+    completed_ids = set(state.get("completed_task_ids", []))
+
+    if len(completed_ids) == len(tasks) and len(tasks) > 0:
+        return "complete"
+
+    return "approval_check"
 
 
 def build_orchestrator_graph():
@@ -241,6 +367,7 @@ def build_orchestrator_graph():
             "__end__": END,
         },
     )
+
     workflow.add_edge("verify", "artifact")
 
     workflow.add_conditional_edges(
@@ -249,6 +376,7 @@ def build_orchestrator_graph():
         {
             "approval_check": "approval_check",
             "complete": "complete",
+            "__end__": END,
         },
     )
 

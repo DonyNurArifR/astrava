@@ -1,8 +1,10 @@
 import type {
+  Agent,
   Approval,
   Artifact,
   Execution,
   ModelExecution,
+  ObjectiveUnderstanding,
   Project,
   ProjectStats,
   StructuredPlan,
@@ -98,6 +100,12 @@ export const api = {
   getModelExecutions: () => fetch(`${API_BASE}/intelligence/usage`).then(r => handleResponse<ModelExecution[]>(r)),
 
   // Orchestrator
+  understandObjective: (objective: string, studioType?: StudioType, projectId?: string) =>
+    fetch(`${API_BASE}/orchestrator/understand`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ objective, studio_type: studioType, project_id: projectId }),
+    }).then(r => handleResponse<ObjectiveUnderstanding>(r)),
   generatePlan: (projectId: string, objective: string, studioType: StudioType) =>
     fetch(`${API_BASE}/orchestrator/plan`, {
       method: 'POST',
@@ -116,4 +124,25 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision, reason, decided_by: 'Abstract' }),
     }).then(r => handleResponse<Execution>(r)),
+
+  // Agent Registry
+  getAgents: (studioType?: string, isEnabled?: boolean) => {
+    let url = `${API_BASE}/agents`;
+    const params = new URLSearchParams();
+    if (studioType) params.append('studio_type', studioType);
+    if (isEnabled !== undefined) params.append('is_enabled', String(isEnabled));
+    const qs = params.toString();
+    if (qs) url += `?${qs}`;
+    return fetch(url).then(r => handleResponse<Agent[]>(r));
+  },
+  getAgent: (idOrSlug: string) =>
+    fetch(`${API_BASE}/agents/${idOrSlug}`).then(r => handleResponse<Agent>(r)),
+  updateAgentStatus: (idOrSlug: string, isEnabled: boolean) =>
+    fetch(`${API_BASE}/agents/${idOrSlug}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_enabled: isEnabled }),
+    }).then(r => handleResponse<Agent>(r)),
+  seedAgents: () =>
+    fetch(`${API_BASE}/agents/seed`, { method: 'POST' }).then(r => handleResponse<any>(r)),
 };

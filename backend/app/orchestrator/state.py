@@ -8,6 +8,7 @@ class OrchestrationState(TypedDict, total=False):
     studio_type: str
     plan: dict[str, Any]
     current_task_index: int
+    current_ready_task_ids: list[str]
     tasks: list[dict[str, Any]]
     completed_task_ids: list[str]
     active_approval_id: str | None

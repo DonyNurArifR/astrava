@@ -60,6 +60,7 @@ class Task(Base, UUIDMixin, TimestampMixin):
     assigned_model: Mapped[str] = mapped_column(
         String(100), default="claude-haiku-5-5", nullable=False
     )
+    assigned_agent_slug: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     risk_level: Mapped[RiskLevel] = mapped_column(
         Enum(RiskLevel, native_enum=False),
         default=RiskLevel.LOW,

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.agents import router as agents_router
 from app.api.v1.approvals import router as approvals_router
 from app.api.v1.artifacts import router as artifacts_router
 from app.api.v1.executions import router as executions_router
@@ -37,7 +38,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     description="ASTRAVA: AI Creation and Orchestration Platform — From vision to execution.",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -54,6 +55,7 @@ app.add_middleware(
 
 # API Routers
 app.include_router(health_router, prefix="/api/v1")
+app.include_router(agents_router, prefix="/api/v1")
 app.include_router(orchestrator_router, prefix="/api/v1")
 app.include_router(projects_router, prefix="/api/v1")
 app.include_router(tasks_router, prefix="/api/v1")

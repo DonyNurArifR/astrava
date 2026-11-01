@@ -204,3 +204,61 @@
 - Comprehensive report generated in `docs/V1_1_1_ACCEPTANCE_REPORT.md`.
 - Executive Assessment: **B. Release accepted with documented limitations.**
 - Recommendation: **Freeze V1.1 / V1.1.1 as the verified stable baseline for the next product-development phase.**
+
+---
+
+## 2026-11-01: ASTRAVA V1.2 — Agent Intelligence & Workflow Engine
+
+### Phase 1: Reusable Agent Domain Model & Registry
+- Created SQLAlchemy model `Agent` (`backend/app/models/agent.py`) with fields: `slug`, `name`, `description`, `studio_type`, `capabilities`, `instructions`, `input_schema`, `output_schema`, `available_tools`, `model_config_data`, `execution_config`, `verification_requirements`, `version`, `is_enabled`.
+- Added `tasks.assigned_agent_slug` foreign reference column.
+- Generated and executed Alembic migration `6b136f812cca_add_agent_registry_and_task_agent_slug.py`.
+- Defined default seed data in `AgentService.seed_default_agents`:
+  - 7 SaaS Studio agents: `product-researcher`, `competitor-analyst`, `product-strategist`, `product-manager`, `solution-architect`, `developer`, `qa-engineer`.
+  - 9 Media Studio agents: `content-researcher`, `audience-analyst`, `content-strategist`, `content-calendar-planner`, `scriptwriter`, `storyboard-designer`, `production-assistant`, `seo-analyst`, `content-quality-reviewer`.
+- Implemented API router `backend/app/api/v1/agents.py` (`GET /agents`, `POST /agents/seed`, `GET /agents/{id}`, `POST /agents`, `PATCH /agents/{id}/status`, `PUT /agents/{id}`).
+
+### Phase 2: Semantic Objective Understanding
+- Created `IntelligenceService.understand_objective` (`backend/app/services/intelligence_service.py`):
+  - Prompts configured Claude Haiku CLI for structured JSON analysis.
+  - Extracts intended outcome, studio classification, required capabilities, expected deliverables, complexity, ambiguities, missing information, potential risks, and clarification questions.
+  - Enforces deterministic Pydantic schema validation (`ObjectiveUnderstandingResponse`) with fallback for test and offline environments.
+- Added API endpoint `POST /api/v1/orchestrator/understand`.
+
+### Phase 3: Dynamic DAG Planning & Parallel Execution Stages
+- Upgraded `PlannerService` (`backend/app/orchestrator/planner.py`):
+  - Formulates multi-agent execution plans with assigned agents and explicit dependencies.
+  - Cycle detection using Kahn's algorithm; raises `ValueError` on circular dependencies.
+  - Computes parallel execution stages (`execution_stages`): groups independent tasks into concurrent waves.
+  - SaaS pipeline features concurrent research & competitor analysis (Stage 1), strategic synthesis (Stage 2), PRD (Stage 3), architecture (Stage 4), modular code implementation (Stage 5), and deterministic QA (Stage 6).
+  - Media pipeline features concurrent content & audience research (Stage 1), narrative strategy (Stage 2), scriptwriting (Stage 3), concurrent storyboard & SEO optimization (Stage 4), production manifest (Stage 5), and quality review with human approval gate (Stage 6).
+
+### Phase 4: Dependency-Aware Multi-Agent Execution Engine
+- Refactored `workflow_graph.py` and `runner.py`:
+  - `approval_check_node`: identifies ready tasks whose dependencies are satisfied; pauses for human approval if any ready task requires it.
+  - `dispatch_task_node`: executes ready tasks in parallel using `asyncio.gather` up to concurrency bounds.
+  - Injects agent role, system instructions, and preceding task deliverables as context into downstream prompts.
+  - `verify_node`: deterministic verification for completed task batches.
+  - `artifact_node`: registers generated deliverables with producing agent slug.
+
+### Phase 5: Frontend Agent Registry & DAG Visualization
+- Implemented `AgentsPage.tsx` (`/agents`):
+  - Agent cards with studio badges, capabilities tags, model config, and enable/disable toggle.
+  - Inspector modal displaying system instructions, JSON output schemas, and verification criteria.
+- Upgraded `CommandCenterPage.tsx`:
+  - "Understand Objective" button triggers semantic interpretation card.
+  - "Generate Multi-Agent Plan" triggers interactive DAG stage preview with assigned agent tags and dependency pills.
+  - Real-time multi-agent execution progress monitoring.
+- Updated `Sidebar.tsx` and `App.tsx` routing.
+
+### Phase 6: Verification & Live Claude Haiku Proof
+- **Backend Tests:** 27/27 tests passed in 2.45s (added `tests/test_agents.py`).
+- **Backend Linting:** Ruff clean, 61 files formatted.
+- **Frontend Tests:** 8/8 Vitest suites passed (10 tests) in 883ms (added `AgentsPage.test.tsx`).
+- **Frontend Linting:** Oxlint 0 warnings, 0 errors across 29 files.
+- **Frontend Build:** Vite production bundle built in 92ms.
+- **Live Integration:** `scratch/test_v1_2_live_agent_run.py` executed live with Claude Haiku 5.5 CLI:
+  - Objective: "Build an autonomous invoice validation and fraud audit system with webhook alerts".
+  - Semantic understanding: High complexity, 15 capabilities, 4 deliverables, clarification requested.
+  - DAG plan: 7 tasks across 6 stages with Stage 1 parallel execution.
+  - Task 1 dispatched to `product-researcher`: 6,588 tokens generated in 41.1s via `claude-haiku-5-5`, cost $0.006196. Status: 100% SUCCESS.

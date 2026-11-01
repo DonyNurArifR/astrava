@@ -1,7 +1,7 @@
 # ASTRAVA Development Roadmap
-**Version:** 1.1.0  
+**Version:** 1.2.0  
 **Product:** ASTRAVA — AI Creation and Orchestration Platform ("From vision to execution.")  
-**Overall Status:** V1.1 AUDITED, HARDENED & DELIVERED
+**Overall Status:** V1.2 AGENT INTELLIGENCE & WORKFLOW ENGINE VERIFIED & DELIVERED
 
 ---
 
@@ -21,3 +21,4 @@
 | **M9** | End-to-End Integration & Proof | **COMPLETE** | Complete lifecycle test passing, resilience against path traversal attacks, rejection handling, and state preservation. |
 | **M10** | Documentation & Delivery | **COMPLETE** | Comprehensive README, ARCHITECTURE, ROADMAP, PROGRESS, EXECUTION_LOG, API reference, PROVIDER docs. |
 | **V1.1** | Independent Audit, Reliability & Security Hardening | **COMPLETE** | Resolved all 7 audit findings: resumption data deduplication, concurrency bound, expanded credential redaction, process group termination, Pydantic input boundaries, Vitest test suite, Oxlint cleanup, DB restart durability. |
+| **V1.2** | Agent Intelligence & Workflow Engine | **COMPLETE** | Reusable Agent Registry (16 specialized agents), semantic objective understanding with clarification prompts, dynamic Directed Acyclic Graph (DAG) planning, parallel execution of independent tasks via `asyncio.gather`, upstream context injection, deterministic quality verification, and Agent Registry UI. |

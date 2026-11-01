@@ -101,11 +101,39 @@ erDiagram
     WORKFLOW_EXECUTIONS ||--o{ APPROVALS : requires
     WORKFLOW_EXECUTIONS ||--o{ MODEL_EXECUTIONS : records
     TASKS ||--o{ MODEL_EXECUTIONS : triggers
+    AGENTS ||--o{ TASKS : assigned
 ```
 
 ---
 
-## 4. Frontend Visual Architecture
+## 4. Multi-Agent Intelligence & Dynamic DAG Orchestration (V1.2)
+
+### 4.1 Reusable Agent Registry
+Agents in ASTRAVA are modeled as configurable autonomous capabilities, not hardcoded prompt strings. Each agent in the `agents` table specifies:
+- **Identity & Slug:** Unique identifier (e.g. `product-researcher`, `solution-architect`, `scriptwriter`).
+- **Studio Alignment:** SaaS Studio (7 specialized agents) or Media Studio (9 specialized agents).
+- **Capability Taxonomy:** Standardized tags for discovery and matching (`market_research`, `system_design`, `screenwriting`, etc.).
+- **System Directives:** Precise role responsibilities and behavioral boundaries.
+- **Input & Output Contracts:** JSON Schema / Pydantic definitions enforcing structured outputs.
+- **Execution & Tool Config:** Assigned model (`claude-haiku-5-5`), timeouts, and available tool capabilities.
+- **Status & Versioning:** Independent toggleable `is_enabled` status and semantic version strings.
+
+### 4.2 Semantic Objective Understanding
+Before workflow construction, objectives pass through `IntelligenceService.understand_objective`:
+1. Claude Haiku 5.5 performs zero-shot semantic analysis, extracting intended outcomes, studio classification, required capabilities, and deliverables.
+2. Evaluates ambiguity: if critical parameters are absent, generates targeted clarification prompts rather than assuming scope.
+3. Fallback deterministic heuristic rules ensure reliability during offline or test environments.
+
+### 4.3 Dynamic DAG Planning & Parallel Execution Stages
+The workflow planner (`PlannerService`) transforms the interpreted objective into a Directed Acyclic Graph (DAG):
+1. **Cycle Prevention:** Computes in-degree dependency graphs via Kahn's algorithm; rejects circular dependencies deterministically.
+2. **Concurrent Waves:** Partitions tasks into parallel execution stages. Independent tasks (e.g. Market Research and Competitor Analysis in SaaS; Content Research and Audience Analysis in Media) execute concurrently via `asyncio.gather`.
+3. **Upstream Context Injection:** Tasks receive synthesized artifacts and text outputs from their upstream prerequisite dependencies.
+4. **Deterministic QA Verification:** Tasks assigned to `qa-engineer` or deterministic executors run programmatic test suites and code checks.
+
+---
+
+## 5. Frontend Visual Architecture
 - **Enterprise Design System:**
   - Primary colors: Midnight Navy (`#101827`), Slate Blue (`#253B59`), Electric Blue (`#3B82F6`), Ice Blue (`#B9D8FF`).
   - Neutrals: Cloud White (`#F8FAFC`), Steel Gray (`#64748B`).
@@ -113,7 +141,8 @@ erDiagram
   - Typography: Inter for UI body/headings, JetBrains Mono for code/logs.
 - **Navigation:**
   - Overview
-  - Command Center
+  - Command Center (with live Semantic Understanding & DAG visualization)
+  - Agent Registry (with specs inspector and enable/disable toggle)
   - Projects
   - Executions
   - Artifacts

@@ -142,12 +142,18 @@ class OrchestrationRunner:
             reloaded = await WorkflowService.get_execution(db, execution_id)
             return reloaded or execution
 
-        # Approved -> Mark current task as approved in state
+        # Approved -> Mark active task as approved in state
         tasks = state.get("tasks", [])
-        idx = state.get("current_task_index", 0)
-        if idx < len(tasks):
-            tasks[idx]["approved"] = True
-            tasks[idx]["requires_approval"] = False
+        active_task_id = state.get("active_approval_id")
+        approved_title = "Approved Task"
+        for t in tasks:
+            if t.get("task_id") == active_task_id or (
+                not active_task_id and t.get("requires_approval")
+            ):
+                t["approved"] = True
+                t["requires_approval"] = False
+                approved_title = t.get("title", approved_title)
+
         state["tasks"] = tasks
         state["status"] = "running"
         state["active_approval_id"] = None
@@ -156,7 +162,7 @@ class OrchestrationRunner:
             db, execution_id, ExecutionStatus.RUNNING, state_data=state
         )
         await WorkflowService.record_event(
-            db, execution_id, "pipeline_resumed", {"approved_task": tasks[idx]["title"]}
+            db, execution_id, "pipeline_resumed", {"approved_task": approved_title}
         )
 
         # Resume LangGraph execution from approved task with concurrency semaphore
@@ -232,6 +238,7 @@ class OrchestrationRunner:
                         description=t.get("description", ""),
                         executor_type=t.get("executor_type", "claude_code"),
                         assigned_model=t.get("assigned_model", "claude-haiku-5-5"),
+                        assigned_agent_slug=t.get("assigned_agent_slug"),
                         risk_level=t.get("risk_level", "low"),
                         priority=t.get("priority", 1),
                         dependency_ids=t.get("dependencies", []),
@@ -305,12 +312,13 @@ class OrchestrationRunner:
 
         state["synced_usage_count"] = len(usage_records)
 
-        # Handle pause for approval if waiting
-        current_step = state.get("current_task_index", 0)
+        # Current progress step based on completed task count
+        current_step = len(state.get("completed_task_ids", []))
         if state_status == "waiting_approval":
             active_task_id = state.get("active_approval_id")
-            current_idx = state.get("current_task_index", 0)
-            task_info = tasks[current_idx] if current_idx < len(tasks) else {}
+            task_info = next((t for t in tasks if t.get("task_id") == active_task_id), {})
+            if not task_info and tasks:
+                task_info = tasks[0]
             approval = await ApprovalService.request_approval(
                 db,
                 execution_id=execution_id,

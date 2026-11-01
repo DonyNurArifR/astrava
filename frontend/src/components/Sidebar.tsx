@@ -7,6 +7,7 @@ import {
   FileText,
   ShieldCheck,
   Cpu,
+  Bot,
   Settings as SettingsIcon,
   Moon,
   Sun,
@@ -18,6 +19,7 @@ import { useTheme } from '../context/useTheme';
 export type NavItemKey =
   | 'overview'
   | 'command-center'
+  | 'agents'
   | 'projects'
   | 'executions'
   | 'artifacts'
@@ -41,6 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navItems = [
     { key: 'overview', label: 'Overview', icon: LayoutDashboard },
     { key: 'command-center', label: 'Command Center', icon: Terminal, badge: 'Live' },
+    { key: 'agents', label: 'Agent Registry', icon: Bot },
     { key: 'projects', label: 'Projects', icon: FolderKanban },
     { key: 'executions', label: 'Executions', icon: PlayCircle },
     { key: 'artifacts', label: 'Artifacts', icon: FileText },

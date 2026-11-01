@@ -9,6 +9,7 @@ import { ProjectsPage } from './pages/ProjectsPage';
 import { ExecutionsPage } from './pages/ExecutionsPage';
 import { ArtifactsPage } from './pages/ArtifactsPage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
+import { AgentsPage } from './pages/AgentsPage';
 import { IntelligencePage } from './pages/IntelligencePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { api } from './api/client';
@@ -43,6 +44,8 @@ export const AppContent: React.FC = () => {
         return { title: 'Executive Overview', subtitle: 'Platform-wide production metrics and activity' };
       case 'command-center':
         return { title: 'Autonomous Command Center', subtitle: 'Interactive planning and task orchestration' };
+      case 'agents':
+        return { title: 'Autonomous Agent Registry', subtitle: 'Specialized agent capabilities, instructions, and execution schemas' };
       case 'projects':
         return { title: 'Studio Projects', subtitle: 'SaaS and Media production environments' };
       case 'executions':
@@ -79,6 +82,7 @@ export const AppContent: React.FC = () => {
         <main className="flex-1 overflow-y-auto">
           {activeTab === 'overview' && <OverviewPage onNavigate={setActiveTab} />}
           {activeTab === 'command-center' && <CommandCenterPage />}
+          {activeTab === 'agents' && <AgentsPage />}
           {activeTab === 'projects' && <ProjectsPage />}
           {activeTab === 'executions' && <ExecutionsPage />}
           {activeTab === 'artifacts' && <ArtifactsPage />}

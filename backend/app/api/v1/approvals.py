@@ -23,6 +23,14 @@ async def list_approvals(
     return [ApprovalRead.model_validate(a) for a in approvals]
 
 
+@router.get("/pending", response_model=list[ApprovalRead])
+async def list_pending_approvals(
+    db: AsyncSession = Depends(get_db),
+) -> list[ApprovalRead]:
+    approvals = await ApprovalService.list_pending(db)
+    return [ApprovalRead.model_validate(a) for a in approvals]
+
+
 @router.get("/{approval_id}", response_model=ApprovalRead)
 async def get_approval(
     approval_id: uuid.UUID,

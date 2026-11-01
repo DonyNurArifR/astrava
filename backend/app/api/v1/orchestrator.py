@@ -10,9 +10,21 @@ from app.orchestrator.planner import PlannerService, StructuredPlan
 from app.orchestrator.runner import OrchestrationRunner
 from app.schemas.approval import ApprovalDecisionRequest
 from app.schemas.execution import ExecutionRead
+from app.schemas.intelligence import (
+    ObjectiveUnderstandingRequest,
+    ObjectiveUnderstandingResponse,
+)
+from app.services.intelligence_service import IntelligenceService
 from app.services.project_service import ProjectService
 
 router = APIRouter(prefix="/orchestrator", tags=["Orchestrator"])
+
+
+@router.post("/understand", response_model=ObjectiveUnderstandingResponse)
+async def understand_objective(
+    req: ObjectiveUnderstandingRequest,
+) -> ObjectiveUnderstandingResponse:
+    return await IntelligenceService.understand_objective(req)
 
 
 class PlanRequest(BaseModel):
@@ -88,6 +100,7 @@ async def execute_pipeline(
 
 
 @router.post("/resume/{execution_id}", response_model=ExecutionRead)
+@router.post("/executions/{execution_id}/resume", response_model=ExecutionRead)
 async def resume_pipeline(
     execution_id: uuid.UUID,
     decision_req: ApprovalDecisionRequest,

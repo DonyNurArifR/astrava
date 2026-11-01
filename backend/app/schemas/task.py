@@ -12,6 +12,7 @@ class TaskBase(BaseModel):
     description: str | None = Field(None, max_length=5000, description="Task details")
     executor_type: ExecutorType = ExecutorType.CLAUDE_CODE
     assigned_model: str = "claude-haiku-5-5"
+    assigned_agent_slug: str | None = None
     risk_level: RiskLevel = RiskLevel.LOW
     priority: int = 1
     dependency_ids: list[str] = []

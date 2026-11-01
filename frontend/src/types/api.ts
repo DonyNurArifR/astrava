@@ -130,6 +130,7 @@ export interface PlannedTask {
   task_id: string;
   title: string;
   description: string;
+  assigned_agent_slug?: string;
   executor_type: string;
   assigned_model: string;
   risk_level: RiskLevel;
@@ -138,6 +139,7 @@ export interface PlannedTask {
   dependencies: string[];
   expected_output_artifacts: string[];
   acceptance_criteria: string[];
+  verification_criteria?: string[];
 }
 
 export interface StructuredPlan {
@@ -147,5 +149,44 @@ export interface StructuredPlan {
   studio_type: StudioType;
   strategy_summary: string;
   estimated_cost_usd: number;
+  selected_agent_slugs?: string[];
   tasks: PlannedTask[];
+  execution_stages?: string[][];
+  is_valid_dag?: boolean;
+}
+
+export interface Agent {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  studio_type: StudioType;
+  capabilities: string[];
+  instructions: string;
+  input_schema: Record<string, any>;
+  output_schema: Record<string, any>;
+  available_tools: string[];
+  model_config_data: Record<string, any>;
+  execution_config: Record<string, any>;
+  verification_requirements: string[];
+  version: string;
+  is_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ObjectiveUnderstanding {
+  objective_summary: string;
+  studio: StudioType;
+  project_context: string;
+  intended_outcome: string;
+  required_capabilities: string[];
+  relevant_constraints: string[];
+  expected_deliverables: string[];
+  complexity: 'low' | 'medium' | 'high';
+  ambiguities: string[];
+  missing_information: string[];
+  potential_risks: string[];
+  needs_clarification: boolean;
+  clarification_questions: string[];
 }

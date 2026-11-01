@@ -40,7 +40,8 @@ async def test_full_e2e_saas_lifecycle():
         )
         assert plan_res.status_code == 200
         plan = plan_res.json()
-        assert len(plan["tasks"]) == 4
+        assert len(plan["tasks"]) == 7
+        assert plan["is_valid_dag"] is True
 
         # 3. Execute Pipeline with Claude Haiku 5.5
         mock_output = ProviderResponse(
@@ -69,7 +70,7 @@ async def test_full_e2e_saas_lifecycle():
             assert exec_res.status_code == 202
             execution = exec_res.json()
             assert execution["status"] == "completed"
-            assert execution["current_step"] == 4
+            assert execution["current_step"] == 7
 
             # 4. Check registered artifacts
             art_res = await client.get(f"/api/v1/artifacts/project/{project_id}")
