@@ -215,6 +215,14 @@ async def test_memory_listing_filtering_and_pagination(db_session: AsyncSession)
         assert res_date_err.status_code == 400
         assert "created_after cannot be later than created_before" in res_date_err.json()["detail"]
 
+        # 6. Aggregate memory statistics
+        res_stats = await client.get(f"/api/v1/projects/{project.id}/memories/stats")
+        assert res_stats.status_code == 200
+        stats = res_stats.json()
+        assert stats["total_active"] == 2
+        assert stats["archived"] == 1
+        assert stats["open_conflicts"] == 0
+
 
 @pytest.mark.asyncio
 async def test_memory_get_and_cross_project_isolation(db_session: AsyncSession):
@@ -311,6 +319,18 @@ async def test_memory_update_optimistic_concurrency_and_immutability(db_session:
         )
         assert res_conflict.status_code == 409
         assert "Revision conflict" in res_conflict.json()["detail"]
+
+        # 4. Check revision history endpoint returns both revisions in chronological order
+        res_revs = await client.get(
+            f"/api/v1/projects/{project.id}/memories/{new_memory_id}/revisions"
+        )
+        assert res_revs.status_code == 200
+        revs_data = res_revs.json()
+        assert len(revs_data) == 2
+        assert revs_data[0]["revision"] == 1
+        assert revs_data[0]["status"] == MemoryStatus.SUPERSEDED.value
+        assert revs_data[1]["revision"] == 2
+        assert revs_data[1]["status"] == MemoryStatus.ACTIVE.value
 
 
 @pytest.mark.asyncio
@@ -559,12 +579,7 @@ async def test_artifact_lineage_api_exploration(db_session: AsyncSession):
         assert len(data["supersedes"]) == 1
         assert data["supersedes"][0]["name"] == "architecture_v1.md"
 
-        # 2. General /artifacts/{artifact_id}/lineage endpoint
-        res_gen = await client.get(f"/api/v1/artifacts/{art_v2.id}/lineage")
-        assert res_gen.status_code == 200
-        assert res_gen.json()["artifact"]["id"] == str(art_v2.id)
-
-        # 3. Cross-project isolation: querying v2 under other_project returns 404
+        # 2. Cross-project isolation: querying v2 under other_project returns 404
         res_cross = await client.get(
             f"/api/v1/projects/{other_project.id}/artifacts/{art_v2.id}/lineage"
         )

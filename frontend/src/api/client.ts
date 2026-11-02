@@ -2,10 +2,16 @@ import type {
   Agent,
   Approval,
   Artifact,
+  ArtifactLineage,
   Execution,
+  MemoryAuditLog,
+  MemoryConflictItem,
+  MemoryStats,
   ModelExecution,
   ObjectiveUnderstanding,
+  PaginatedResponse,
   Project,
+  ProjectMemory,
   ProjectStats,
   StructuredPlan,
   StudioType,
@@ -145,4 +151,155 @@ export const api = {
     }).then(r => handleResponse<Agent>(r)),
   seedAgents: () =>
     fetch(`${API_BASE}/agents/seed`, { method: 'POST' }).then(r => handleResponse<any>(r)),
+
+  // Project Memory & Intelligence
+  getMemoryStats: (projectId: string) =>
+    fetch(`${API_BASE}/projects/${projectId}/memories/stats`).then(r => handleResponse<MemoryStats>(r)),
+
+  getMemories: (
+    projectId: string,
+    params?: {
+      category?: string;
+      provenance?: string;
+      status?: string;
+      is_verified?: boolean;
+      conflict_status?: string;
+      search?: string;
+      include_historical?: boolean;
+      page?: number;
+      page_size?: number;
+      sort_by?: string;
+      sort_order?: string;
+    }
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.category) qs.append('category', params.category);
+    if (params?.provenance) qs.append('provenance', params.provenance);
+    if (params?.status) qs.append('status', params.status);
+    if (params?.is_verified !== undefined) qs.append('is_verified', String(params.is_verified));
+    if (params?.conflict_status) qs.append('conflict_status', params.conflict_status);
+    if (params?.search) qs.append('search', params.search);
+    if (params?.include_historical) qs.append('include_historical', String(params.include_historical));
+    if (params?.page) qs.append('page', String(params.page));
+    if (params?.page_size) qs.append('page_size', String(params.page_size));
+    if (params?.sort_by) qs.append('sort_by', params.sort_by);
+    if (params?.sort_order) qs.append('sort_order', params.sort_order);
+    const query = qs.toString();
+    const url = `${API_BASE}/projects/${projectId}/memories${query ? `?${query}` : ''}`;
+    return fetch(url).then(r => handleResponse<PaginatedResponse<ProjectMemory>>(r));
+  },
+
+  getMemory: (projectId: string, memoryId: string) =>
+    fetch(`${API_BASE}/projects/${projectId}/memories/${memoryId}`).then(r => handleResponse<ProjectMemory>(r)),
+
+  createMemory: (
+    projectId: string,
+    data: {
+      category: string;
+      summary: string;
+      content: string;
+      provenance_type?: string;
+      confidence_score?: number;
+      metadata_json?: Record<string, any>;
+    }
+  ) =>
+    fetch(`${API_BASE}/projects/${projectId}/memories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).then(r => handleResponse<ProjectMemory>(r)),
+
+  updateMemory: (
+    projectId: string,
+    memoryId: string,
+    data: {
+      expected_revision: number;
+      summary?: string;
+      content?: string;
+      metadata_json?: Record<string, any>;
+      reason?: string;
+    }
+  ) =>
+    fetch(`${API_BASE}/projects/${projectId}/memories/${memoryId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).then(r => handleResponse<ProjectMemory>(r)),
+
+  archiveMemory: (projectId: string, memoryId: string, reason?: string) =>
+    fetch(`${API_BASE}/projects/${projectId}/memories/${memoryId}/archive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    }).then(r => handleResponse<ProjectMemory>(r)),
+
+  restoreMemory: (projectId: string, memoryId: string, reason?: string) =>
+    fetch(`${API_BASE}/projects/${projectId}/memories/${memoryId}/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    }).then(r => handleResponse<ProjectMemory>(r)),
+
+  verifyMemory: (
+    projectId: string,
+    memoryId: string,
+    data: {
+      verified_by: string;
+      reason?: string;
+      verification_details?: Record<string, any>;
+    }
+  ) =>
+    fetch(`${API_BASE}/projects/${projectId}/memories/${memoryId}/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).then(r => handleResponse<ProjectMemory>(r)),
+
+  getConflicts: (projectId: string, category?: string, page?: number, page_size?: number) => {
+    const qs = new URLSearchParams();
+    if (category) qs.append('category', category);
+    if (page) qs.append('page', String(page));
+    if (page_size) qs.append('page_size', String(page_size));
+    const query = qs.toString();
+    const url = `${API_BASE}/projects/${projectId}/memories/conflicts${query ? `?${query}` : ''}`;
+    return fetch(url).then(r => handleResponse<PaginatedResponse<MemoryConflictItem>>(r));
+  },
+
+  resolveConflict: (
+    projectId: string,
+    memoryId: string,
+    data: {
+      resolution: 'supersede' | 'reject' | 'merge';
+      reason: string;
+      actor_id?: string;
+      merged_summary?: string;
+      merged_content?: string;
+    }
+  ) =>
+    fetch(`${API_BASE}/projects/${projectId}/memories/${memoryId}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).then(r => handleResponse<ProjectMemory>(r)),
+
+  getMemoryRevisions: (projectId: string, memoryId: string) =>
+    fetch(`${API_BASE}/projects/${projectId}/memories/${memoryId}/revisions`).then(r =>
+      handleResponse<ProjectMemory[]>(r)
+    ),
+
+  getMemoryAudit: (
+    projectId: string,
+    memoryId: string,
+    order: 'asc' | 'desc' = 'desc',
+    page = 1,
+    page_size = 50
+  ) =>
+    fetch(
+      `${API_BASE}/projects/${projectId}/memories/${memoryId}/audit?order=${order}&page=${page}&page_size=${page_size}`
+    ).then(r => handleResponse<PaginatedResponse<MemoryAuditLog>>(r)),
+
+  getArtifactLineage: (projectId: string, artifactId: string) =>
+    fetch(`${API_BASE}/projects/${projectId}/artifacts/${artifactId}/lineage`).then(r =>
+      handleResponse<ArtifactLineage>(r)
+    ),
 };

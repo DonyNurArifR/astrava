@@ -86,6 +86,11 @@ export interface Artifact {
   artifact_type: string;
   mime_type: string;
   file_size_bytes: number;
+  version?: number;
+  parent_artifact_id?: string | null;
+  superseded_by_id?: string | null;
+  verification_status?: string;
+  verification_details?: Record<string, any>;
   metadata_json: Record<string, any>;
   created_at: string;
   updated_at: string;
@@ -189,4 +194,118 @@ export interface ObjectiveUnderstanding {
   potential_risks: string[];
   needs_clarification: boolean;
   clarification_questions: string[];
+}
+
+export type MemoryCategory =
+  | 'objective'
+  | 'decision'
+  | 'requirement'
+  | 'constraint'
+  | 'discovery'
+  | 'preference'
+  | 'question'
+  | 'risk'
+  | 'milestone';
+
+export type MemoryProvenanceType =
+  | 'user_provided'
+  | 'verified_finding'
+  | 'agent_conclusion'
+  | 'assumption';
+
+export type MemoryStatus =
+  | 'active'
+  | 'proposed'
+  | 'superseded'
+  | 'rejected'
+  | 'archived';
+
+export type MemoryConflictStatus = 'none' | 'detected' | 'resolved';
+
+export type MemoryAuditAction =
+  | 'created'
+  | 'updated'
+  | 'verified'
+  | 'archived'
+  | 'restored'
+  | 'conflict_resolved'
+  | 'purged';
+
+export interface ProjectMemory {
+  id: string;
+  project_id: string;
+  category: MemoryCategory;
+  summary: string;
+  content: string;
+  provenance_type: MemoryProvenanceType;
+  confidence_score: number;
+  is_verified: boolean;
+  verified_at: string | null;
+  source_execution_id: string | null;
+  source_task_id: string | null;
+  source_artifact_id: string | null;
+  source_agent_slug: string | null;
+  status: MemoryStatus;
+  revision: number;
+  previous_revision_id: string | null;
+  conflict_status: MemoryConflictStatus;
+  conflicting_memory_id: string | null;
+  metadata_json: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryConflictItem {
+  memory_id: string;
+  summary: string;
+  category: MemoryCategory;
+  status: MemoryStatus;
+  revision: number;
+  provenance_type: MemoryProvenanceType;
+  conflict_status: MemoryConflictStatus;
+  conflicting_memory_id: string | null;
+  partner_summary: string | null;
+  partner_status: MemoryStatus | null;
+  partner_provenance_type: MemoryProvenanceType | null;
+  partner_revision: number | null;
+  created_at: string;
+}
+
+export interface MemoryAuditLog {
+  id: string;
+  memory_id: string | null;
+  project_id: string;
+  action: MemoryAuditAction;
+  actor_type: string;
+  actor_id: string | null;
+  reason: string | null;
+  previous_state: Record<string, any> | null;
+  new_state: Record<string, any> | null;
+  created_at: string;
+}
+
+export interface MemoryStats {
+  total_active: number;
+  verified_findings: number;
+  agent_conclusions: number;
+  assumptions: number;
+  open_conflicts: number;
+  archived: number;
+}
+
+export interface ArtifactLineage {
+  artifact: Artifact;
+  parent: Artifact | null;
+  ancestors: Artifact[];
+  descendants: Artifact[];
+  superseded_by: Artifact | null;
+  supersedes: Artifact[];
+}
+
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }

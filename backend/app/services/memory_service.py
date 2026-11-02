@@ -276,6 +276,51 @@ class MemoryService:
         return items, total_count
 
     @staticmethod
+    async def get_memory_stats(
+        db: AsyncSession,
+        project_id: uuid.UUID,
+    ) -> dict[str, int]:
+        """Aggregate memory statistics for a project in a single query."""
+        stmt = select(
+            func.count(ProjectMemory.id)
+            .filter(ProjectMemory.status == MemoryStatus.ACTIVE)
+            .label("total_active"),
+            func.count(ProjectMemory.id)
+            .filter(
+                ProjectMemory.provenance_type == MemoryProvenanceType.VERIFIED_FINDING,
+                ProjectMemory.status != MemoryStatus.SUPERSEDED,
+            )
+            .label("verified_findings"),
+            func.count(ProjectMemory.id)
+            .filter(
+                ProjectMemory.provenance_type == MemoryProvenanceType.AGENT_CONCLUSION,
+                ProjectMemory.status != MemoryStatus.SUPERSEDED,
+            )
+            .label("agent_conclusions"),
+            func.count(ProjectMemory.id)
+            .filter(
+                ProjectMemory.provenance_type == MemoryProvenanceType.ASSUMPTION,
+                ProjectMemory.status != MemoryStatus.SUPERSEDED,
+            )
+            .label("assumptions"),
+            func.count(ProjectMemory.id)
+            .filter(ProjectMemory.conflict_status == MemoryConflictStatus.DETECTED)
+            .label("open_conflicts"),
+            func.count(ProjectMemory.id)
+            .filter(ProjectMemory.status == MemoryStatus.ARCHIVED)
+            .label("archived"),
+        ).where(ProjectMemory.project_id == project_id)
+        row = (await db.execute(stmt)).one()
+        return {
+            "total_active": row.total_active or 0,
+            "verified_findings": row.verified_findings or 0,
+            "agent_conclusions": row.agent_conclusions or 0,
+            "assumptions": row.assumptions or 0,
+            "open_conflicts": row.open_conflicts or 0,
+            "archived": row.archived or 0,
+        }
+
+    @staticmethod
     async def list_conflicts(
         db: AsyncSession,
         project_id: uuid.UUID,

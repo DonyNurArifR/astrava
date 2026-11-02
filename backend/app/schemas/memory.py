@@ -193,3 +193,14 @@ class PaginatedResponse[T](BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class MemoryStatsResponse(BaseModel):
+    """Aggregate statistics for a project's memory bank."""
+
+    total_active: int = 0
+    verified_findings: int = 0
+    agent_conclusions: int = 0
+    assumptions: int = 0
+    open_conflicts: int = 0
+    archived: int = 0

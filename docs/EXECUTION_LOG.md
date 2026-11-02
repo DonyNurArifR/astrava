@@ -468,3 +468,34 @@
   - Documented Section 6.5 in `docs/ARCHITECTURE.md`.
   - Updated `docs/PROGRESS.md` (M1.3-6 marked COMPLETE).
   - Authored `docs/V1_3_M6_RELEASE_REPORT.md`.
+
+## 2026-11-02 — V1.3-M7: Frontend Project Intelligence Experience (Memory Bank UI)
+- **Role Alignment:** Lead AI Architect & Technical Lead. Executor: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Backend API Additions & Audit:**
+  - Added `MemoryStatsResponse` schema in `backend/app/schemas/memory.py`.
+  - Implemented `MemoryService.get_memory_stats(db, project_id)` executing single-query SQL aggregation across active, verified, conclusion, assumption, conflict, and archived counts.
+  - Added `GET /api/v1/projects/{project_id}/memories/stats` endpoint in `backend/app/api/v1/memories.py`.
+  - Added `GET /api/v1/projects/{project_id}/memories/{memory_id}/revisions` endpoint calling `MemoryService.get_revision_history`.
+  - Restricted `GET /api/v1/projects/{project_id}/artifacts/{artifact_id}/lineage` strictly to project scope for project boundary isolation.
+- **Frontend Type Definitions & API Client:**
+  - Updated `frontend/src/types/api.ts`: Added types for `MemoryCategory`, `MemoryProvenanceType`, `MemoryStatus`, `MemoryConflictStatus`, `MemoryAuditAction`, `ProjectMemory`, `MemoryConflictItem`, `MemoryAuditLog`, `MemoryStats`, `ArtifactLineage`, `PaginatedResponse<T>`, and lineage fields to `Artifact`.
+  - Updated `frontend/src/api/client.ts`: Added client methods for `getMemoryStats`, `getMemories`, `getMemory`, `createMemory`, `updateMemory`, `archiveMemory`, `restoreMemory`, `verifyMemory`, `getConflicts`, `resolveConflict`, `getMemoryRevisions`, `getMemoryAudit`, `getArtifactLineage`.
+- **UI Components Implemented:**
+  - `frontend/src/components/intelligence/ProvenanceBadge.tsx`: Visual badges across the 4 provenance classifications (`user_provided`, `verified_finding`, `agent_conclusion`, `assumption`) with calibrated score indicators.
+  - `frontend/src/components/intelligence/VerificationBadge.tsx`: Independent indicator decoupled from provenance, showing operator verification with verifier identity and date tooltip.
+  - `frontend/src/components/intelligence/MemoryFormModal.tsx`: Creation and edit modal with character counters, category/provenance selectors, and optimistic concurrency conflict handling (`expected_revision` HTTP 409 handling).
+  - `frontend/src/components/intelligence/MemoryDetailModal.tsx`: Comprehensive inspector with Overview, immutable Revision History, and immutable Audit Trail tabs, plus in-place verification and archive/restore actions.
+  - `frontend/src/components/intelligence/ConflictWorkbench.tsx`: Side-by-side contradiction resolution interface with list of colliding memory pairs, comparison pane, and `supersede`, `reject`, and `merge` transactional resolution flows.
+  - `frontend/src/components/intelligence/ArtifactLineageExplorer.tsx`: Tree explorer rendering complete ancestry chains, direct parents, current artifact focus, derived descendants, and supersession alerts.
+  - Updated `frontend/src/pages/IntelligencePage.tsx`: Added project selector, 4 tabs (`Memory Bank`, `Conflict Workbench`, `Artifact Lineage`, `Model Telemetry`), KPI cards, live search, multi-filter toolbar, and server pagination.
+- **Testing & Verification:**
+  - Authored `frontend/src/__tests__/IntelligencePage.test.tsx` (6 comprehensive test suites covering header, project selector, memory stats, search/filtering, Conflict Workbench, Artifact Lineage, Model Telemetry, Detail Modal, and Creation Modal).
+  - Vitest test suite: 9/9 test files, 16/16 tests passing in 1.20s.
+  - Vite build: `tsc -b && vite build` completed in 148ms with 0 errors.
+  - Oxlint: 0 errors across 35 files.
+  - Backend regression: 80/80 tests passing in 13.51s. Ruff check & format: 100% clean across all 85 backend files.
+- **Documentation:**
+  - Added Section 6.6 (Memory Bank UI Architecture) in `docs/ARCHITECTURE.md`.
+  - Updated `docs/PROGRESS.md` (marked M1.3-7 COMPLETE).
+  - Authored `docs/V1_3_M7_RELEASE_REPORT.md`.
+

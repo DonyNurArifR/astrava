@@ -23,6 +23,7 @@ from app.schemas.memory import (
     MemoryConflictResolveRequest,
     MemoryCreateRequest,
     MemoryRead,
+    MemoryStatsResponse,
     MemoryUpdateRequest,
     MemoryVerifyRequest,
     PaginatedResponse,
@@ -201,6 +202,17 @@ async def list_conflicts(
     )
 
 
+@router.get("/stats", response_model=MemoryStatsResponse)
+async def get_memory_stats(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> MemoryStatsResponse:
+    """Retrieve aggregate statistics for a project's memory bank."""
+    await _verify_project_exists(db, project_id)
+    stats_data = await MemoryService.get_memory_stats(db, project_id)
+    return MemoryStatsResponse(**stats_data)
+
+
 @router.get("/{memory_id}", response_model=MemoryRead)
 async def get_memory(
     project_id: uuid.UUID,
@@ -218,6 +230,26 @@ async def get_memory(
         )
 
     return MemoryRead.model_validate(memory)
+
+
+@router.get("/{memory_id}/revisions", response_model=list[MemoryRead])
+async def get_memory_revisions(
+    project_id: uuid.UUID,
+    memory_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> list[MemoryRead]:
+    """Retrieve full immutable revision chain connected to this memory, oldest first."""
+    await _verify_project_exists(db, project_id)
+
+    memory = await MemoryService.get_memory(db, project_id, memory_id)
+    if not memory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Memory {memory_id} not found in project {project_id}",
+        )
+
+    revisions = await MemoryService.get_revision_history(db, project_id, memory_id)
+    return [MemoryRead.model_validate(r) for r in revisions]
 
 
 @router.patch("/{memory_id}", response_model=MemoryRead)

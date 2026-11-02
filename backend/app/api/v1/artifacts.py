@@ -118,18 +118,3 @@ async def get_project_artifact_lineage(
         else None,
         supersedes=[ArtifactRead.model_validate(s) for s in lineage_data.get("supersedes", [])],
     )
-
-
-@router.get("/{artifact_id}/lineage", response_model=ArtifactLineageResponse)
-async def get_artifact_lineage(
-    artifact_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-) -> ArtifactLineageResponse:
-    """Retrieve full lineage for an artifact by looking up its project."""
-    artifact = await ArtifactService.get_by_id(db, artifact_id)
-    if not artifact:
-        raise HTTPException(status_code=404, detail="Artifact not found")
-
-    return await get_project_artifact_lineage(
-        project_id=artifact.project_id, artifact_id=artifact_id, db=db
-    )

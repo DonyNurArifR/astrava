@@ -226,3 +226,31 @@ The project intelligence capabilities are exposed via REST under `/api/v1/`:
   - `POST /api/v1/projects/{project_id}/memories/{memory_id}/resolve`: Resolves conflicts using `supersede`, `reject`, or `merge` strategies transactionally.
   - `GET /api/v1/projects/{project_id}/memories/{memory_id}/audit`: Read-only, paginated audit trail. Mutation endpoints are prohibited.
   - `GET /api/v1/projects/{project_id}/artifacts/{artifact_id}/lineage`: Returns full ancestry, children, and supersession graph. Also accessible via `/api/v1/artifacts/{artifact_id}/lineage`.
+
+### 6.6 Frontend Project Intelligence Experience (Memory Bank UI)
+The project intelligence user interface is integrated directly into the `/intelligence` route of the React 19 application:
+- **Project Scoping & Selector:** Header-level project selector guarantees strict project boundary isolation across all intelligence operations.
+- **Memory Bank Dashboard (`IntelligencePage.tsx`):**
+  - KPI summary metrics (`total_active`, `verified_findings`, `agent_conclusions`, `open_conflicts`, `archived`) powered by single-query SQL aggregation endpoint `GET /projects/{project_id}/memories/stats`.
+  - Live search bar and multi-dimensional filtering (Category, Provenance, Verification Status, Include Archived).
+  - Server-paginated memory list with category tags, revision counters, provenance badges, verification badges, and relative timestamps.
+- **Visual Intelligence Components:**
+  - **`ProvenanceBadge.tsx`:** Renders visual origin tags across the 4-tier provenance hierarchy (`user_provided`, `verified_finding`, `agent_conclusion`, `assumption`) with calibrated score indicators.
+  - **`VerificationBadge.tsx`:** Semantically decoupled from provenance, indicating explicit human operator or QA verification with verifier identity tooltip and verification date.
+  - **`MemoryDetailModal.tsx`:** Comprehensive inspector with three views:
+    - *Overview:* Complete factual content, technical metadata grid (status, revision, conflict status, source execution, source task, source agent), and one-click actions for explicit verification and soft-archive/restore.
+    - *Revision History:* Immutable revision log fetched from `GET /projects/{project_id}/memories/{memory_id}/revisions` displaying past summary and content evolutions.
+    - *Audit Trail:* Immutable chronological event timeline from `GET /projects/{project_id}/memories/{memory_id}/audit` tracking actors, actions, and rationales.
+  - **`MemoryFormModal.tsx`:** Modal for manual memory creation and editing. Employs optimistic concurrency control: edits submit `expected_revision`; on HTTP 409 conflict, prompts the user without silently overwriting concurrent changes. Content updates to verified memories trigger warnings indicating that the new revision will reset verification.
+  - **`ConflictWorkbench.tsx`:** Side-by-side contradiction resolution interface:
+    - Scans and lists colliding memory pairs via `GET /projects/{project_id}/memories/conflicts`.
+    - Side-by-side comparison of active memory vs. conflicting counterpart (summary, provenance, revision, status).
+    - Three transactional resolution strategies:
+      - *Supersede:* Retains selected memory, sets partner to SUPERSEDED.
+      - *Reject:* Rejects selected memory as false/outdated, keeps partner active.
+      - *Merge:* Synthesizes both memories into a single reconciled finding with custom summary and content.
+  - **`ArtifactLineageExplorer.tsx`:** Hierarchical derivation tree visualizer:
+    - Traces complete ancestry paths, direct derivation parents, current focus artifact, derived descendants, and supersession chains via `GET /projects/{project_id}/artifacts/{artifact_id}/lineage`.
+    - Interactive tree nodes allow navigating up and down derivation branches.
+  - **`Model Telemetry & Usage`:** Preserved view maintaining token consumption, compute duration, cost estimations, and granular model execution audit tables.
+
