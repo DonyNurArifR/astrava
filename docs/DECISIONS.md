@@ -50,3 +50,13 @@
   2. *pgvector Embeddings:* Rejected for baseline M1.3-4 as embedding generation requires external API calls or heavyweight local models with no embeddings currently populated. Interface is decoupled so semantic vector retrieval can be added as a pluggable retriever.
   3. *Client-side Python Filtering:* Rejected to avoid loading unbounded tables into application memory; filtering and base scoring are pushed to PostgreSQL.
 - **Consequences:** Deterministic, reproducible rankings; strict project isolation; zero external API dependencies; guaranteed prompt budget compliance.
+
+## ADR-009: LangGraph Workflow Memory Integration with Idempotent Ingestion & Pre-Planning Retrieval
+- **Status:** Accepted
+- **Context:** Multi-agent workflows need to benefit from persistent project knowledge before formulating plans, and durable discoveries from completed pipelines must be captured without corrupting checkpoints or creating duplicate records across retries, pauses, or process crashes.
+- **Decision:**
+  1. *Pre-Planning Retrieval Node (`retrieve_knowledge`):* Set as graph entry point before `plan`. Queries `RetrievalService` with mandatory `project_id` and bounds context to $\le 4,000$ chars. Passes context to planner and injects it into downstream agent prompts.
+  2. *Post-Execution Ingestion Node (`ingest_knowledge`):* Placed after all wave tasks and deterministic verification succeed. Only extracts durable knowledge (objectives, verified findings, architectural decisions) into typed Pydantic candidates.
+  3. *Strict Provenance Classification:* Only findings with automated verification evidence receive `verified_finding`; unverified agent outputs remain `agent_conclusion`.
+  4. *Two-Tier Idempotency Guard:* Ingestion checks in-memory `ingestion_status == "completed"` and checks PostgreSQL `ProjectMemory.source_execution_id == execution_id`. A crash between DB commit and checkpoint persistence does not create duplicate memories or audit records on restart.
+- **Consequences:** Safe resumption across interrupts and process crashes; zero duplicate memories; seamless knowledge reuse across separate workflow executions.

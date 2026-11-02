@@ -182,3 +182,28 @@ The retrieval engine operates under `backend/app/services/retrieval/`:
   where text relevance serves as a dominant gating factor so that high provenance cannot rank irrelevant content above relevant findings.
 - **`ContextAssembler`:** Assembles structured Markdown prompt context strictly capped at a configurable character budget (default 4,000 characters). Preserves complete item boundaries, attribution chips, and reports omitted items.
 - **`RetrievalService`:** Public orchestration facade returning explainable `RetrievalResult` objects with execution timing and filter traces.
+
+### 6.4 LangGraph Workflow Memory Integration
+The workflow engine integrates persistent memory into the execution lifecycle via two specialized nodes:
+- **`retrieve_knowledge_node` (Pre-Planning Entrypoint):**
+  - Serves as the starting node of the LangGraph execution graph (`retrieve_knowledge` -> `plan`).
+  - Calls `RetrievalService.retrieve_context` using the objective and project ID.
+  - Stores `retrieved_memories`, `retrieved_artifacts`, and assembled `retrieval_context` into `OrchestrationState`.
+  - Tolerates transient retrieval errors gracefully without failing the workflow, falling back to clean default empty state.
+- **Context Injection into Agent Prompts:**
+  - `PlannerService.generate_plan` accepts bounded `retrieval_context` and presents active constraints, decisions, and past milestones to Claude Haiku during plan formulation.
+  - `_execute_single_task` injects bounded project knowledge context directly into downstream agent prompts, allowing specialized agents to respect known architectural constraints and decisions without re-querying users.
+- **`ingest_knowledge_node` (Post-Execution Durable Ingestion):**
+  - Executed after all task waves and verification steps complete (`route_after_artifact` -> `ingest_knowledge` -> `complete_node` -> `END`).
+  - Extracts candidates using `KnowledgeExtractor`:
+    - Overall workflow milestone completion (`MemoryCategory.MILESTONE`).
+    - Architectural decisions from solution architect / tech lead tasks (`MemoryCategory.DECISION`).
+    - Constraints identified during task execution (`MemoryCategory.CONSTRAINT`).
+    - New technical discoveries from research or exploration tasks (`MemoryCategory.DISCOVERY`).
+  - **Strict Provenance Rules:**
+    - Tasks backed by passing verification checks receive `AGENT_VERIFIED` provenance, `confidence_score = 0.95`, and `is_verified = True`.
+    - Unverified agent assertions receive `AGENT_CONCLUSION` provenance, `confidence_score = 0.70`, and `is_verified = False`.
+  - **Idempotency & Crash Recovery:**
+    - Before writing, checks if `source_execution_id` already persisted memories to PostgreSQL. If found, returns existing memory IDs without duplicating records.
+    - Idempotently ignores reruns if state indicates `ingestion_status == "completed"`.
+    - Creates immutable audit entries in `memory_audit_logs` for all created memories.

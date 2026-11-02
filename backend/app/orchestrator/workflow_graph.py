@@ -2,19 +2,28 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 from pathlib import Path
 from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
+from sqlalchemy import select
 
 from app.config import settings
+from app.db.session import AsyncSessionLocal
+from app.models.execution import WorkflowExecution
+from app.models.memory import ProjectMemory
 from app.models.project import StudioType
 from app.models.task import ExecutorType
+from app.orchestrator.knowledge_extraction import KnowledgeExtractor
 from app.orchestrator.planner import PlannerService
 from app.orchestrator.state import OrchestrationState
 from app.providers.base import ProviderRequest, ProviderStatus
 from app.providers.factory import ProviderFactory
 from app.services.agent_service import DEFAULT_AGENTS
+from app.services.memory_service import MemoryService
+from app.services.retrieval.schemas import RetrievalQuery
+from app.services.retrieval.service import RetrievalService
 from app.verification.engine import VerificationEngine
 
 logger = logging.getLogger("astrava.orchestrator")
@@ -41,6 +50,89 @@ def _extract_json_dict(text: str) -> dict[str, Any] | None:
     return None
 
 
+async def retrieve_knowledge_node(state: OrchestrationState) -> dict[str, Any]:
+    """Retrieves relevant project memories and artifacts before planning."""
+    # If plan already exists (e.g. on resume), preserve existing state and do not re-query
+    if state.get("plan"):
+        logger.info("Preserving existing retrieval context on pipeline resume.")
+        return {}
+
+    project_id_str = state.get("project_id", "")
+    objective = state.get("objective", "")
+
+    try:
+        project_uuid = uuid.UUID(project_id_str)
+    except (ValueError, TypeError):
+        logger.info(
+            "Project ID '%s' is not a valid UUID; skipping database knowledge retrieval.",
+            project_id_str,
+        )
+        return {
+            "retrieved_memories": [],
+            "retrieved_artifacts": [],
+            "retrieval_context": "_No project knowledge available for non-UUID project._",
+            "retrieval_metadata": {"skipped": True, "reason": "non_uuid_project"},
+            "retrieval_error": None,
+        }
+
+    try:
+        async with AsyncSessionLocal() as session:
+            query = RetrievalQuery(
+                project_id=project_uuid,
+                query_text=objective,
+                context_budget_chars=4000,
+                top_k_memories=15,
+                top_k_artifacts=5,
+            )
+            result = await RetrievalService.search(session, query)
+
+        serialized_memories = [
+            {
+                "id": str(m.id),
+                "summary": m.summary,
+                "category": m.category.value,
+                "provenance_type": m.provenance_type.value,
+                "is_verified": m.is_verified,
+                "composite_score": m.composite_score,
+            }
+            for m in result.memories
+        ]
+        serialized_artifacts = [
+            {
+                "id": str(a.id),
+                "name": a.name,
+                "version": a.version,
+                "verification_status": a.verification_status.value,
+            }
+            for a in result.artifacts
+        ]
+
+        logger.info(
+            "Retrieved %d memories and %d artifacts for project %s (context chars: %d)",
+            len(serialized_memories),
+            len(serialized_artifacts),
+            project_id_str,
+            len(result.context_package),
+        )
+
+        return {
+            "retrieved_memories": serialized_memories,
+            "retrieved_artifacts": serialized_artifacts,
+            "retrieval_context": result.context_package,
+            "retrieval_metadata": result.trace_metadata,
+            "retrieval_error": None,
+        }
+    except Exception as e:
+        logger.warning("Knowledge retrieval encountered recoverable error: %s", e)
+        return {
+            "retrieved_memories": [],
+            "retrieved_artifacts": [],
+            "retrieval_context": "_No relevant project knowledge retrieved (retrieval skipped)._",
+            "retrieval_metadata": {"skipped": True, "reason": "error"},
+            "retrieval_error": str(e),
+        }
+
+
 async def plan_node(state: OrchestrationState) -> dict[str, Any]:
     # If plan already exists in state (e.g. on resume), preserve existing plan and tasks
     if state.get("plan"):
@@ -55,6 +147,7 @@ async def plan_node(state: OrchestrationState) -> dict[str, Any]:
         project_id=state.get("project_id", "default"),
         objective=state.get("objective", ""),
         studio_type=studio_type,
+        retrieval_context=state.get("retrieval_context"),
     )
     tasks = [t.model_dump() for t in plan.tasks]
 
@@ -210,12 +303,18 @@ async def _execute_single_task(
         return task, usage_records
 
     # 3. Claude Code CLI execution with bounded retries
+    retrieval_context = state.get("retrieval_context", "")
+    if retrieval_context and not retrieval_context.startswith("_No"):
+        project_context_section = f"Project Knowledge & Architecture Decisions (Persistent Memory):\n{retrieval_context}\n\n"
+    else:
+        project_context_section = ""
+
     prompt = f"""You are an autonomous AI Agent in the ASTRAVA platform.
 Agent Identity: {agent_name} (@{agent_slug})
 Agent Responsibilities & Directives:
 {agent_instructions}
 
-Upstream Prerequisite Deliverables (Verified Context):
+{project_context_section}Upstream Prerequisite Deliverables (Verified Context):
 {upstream_text}
 
 Your Assigned Task: {task["title"]}
@@ -430,6 +529,122 @@ async def artifact_node(state: OrchestrationState) -> dict[str, Any]:
     }
 
 
+async def ingest_knowledge_node(state: OrchestrationState) -> dict[str, Any]:
+    """Extracts and persists durable project knowledge after successful execution."""
+    # 1. In-memory check: if already completed, pass through
+    if state.get("ingestion_status") == "completed" and state.get("ingested_memory_ids"):
+        logger.info("Knowledge ingestion already completed for this execution.")
+        return {}
+
+    project_id_str = state.get("project_id", "")
+    execution_id_str = state.get("execution_id", "")
+
+    try:
+        project_uuid = uuid.UUID(project_id_str)
+        execution_uuid = uuid.UUID(execution_id_str) if execution_id_str else None
+    except (ValueError, TypeError):
+        logger.info("Project or execution ID is non-UUID; skipping memory ingestion.")
+        return {
+            "ingestion_status": "skipped",
+            "ingested_memory_ids": [],
+            "ingestion_errors": ["non_uuid_identifiers"],
+        }
+
+    # 2. Extract structured candidates
+    candidates = KnowledgeExtractor.extract_from_execution(state)
+    if not candidates:
+        logger.info(
+            "No durable knowledge candidates extracted from execution %s",
+            execution_id_str,
+        )
+        return {
+            "ingestion_status": "completed",
+            "knowledge_candidates": [],
+            "ingested_memory_ids": [],
+            "ingestion_errors": [],
+        }
+
+    # 3. Database idempotency check and persistence
+    ingested_ids: list[str] = []
+    errors: list[str] = []
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Verify execution foreign key if execution_uuid is provided
+            valid_execution_id: uuid.UUID | None = None
+            if execution_uuid:
+                exec_row = await session.get(WorkflowExecution, execution_uuid)
+                if exec_row is not None:
+                    valid_execution_id = execution_uuid
+                    # Check if this execution already persisted memories (crash recovery protection)
+                    existing_stmt = select(ProjectMemory).where(
+                        ProjectMemory.project_id == project_uuid,
+                        ProjectMemory.source_execution_id == execution_uuid,
+                    )
+                    existing = list((await session.execute(existing_stmt)).scalars().all())
+                    if existing:
+                        logger.info(
+                            "Found %d existing persisted memories for execution %s; skipping duplicate insertion.",
+                            len(existing),
+                            execution_id_str,
+                        )
+                        return {
+                            "ingestion_status": "completed",
+                            "knowledge_candidates": [c.model_dump() for c in candidates],
+                            "ingested_memory_ids": [str(m.id) for m in existing],
+                            "ingestion_errors": [],
+                        }
+
+            for cand in candidates:
+                try:
+                    mem = await MemoryService.create_memory(
+                        session,
+                        project_id=project_uuid,
+                        category=cand.category,
+                        summary=cand.summary,
+                        content=cand.content,
+                        provenance_type=cand.provenance_type,
+                        confidence_score=cand.confidence_score,
+                        is_verified=cand.is_verified,
+                        source_execution_id=valid_execution_id,
+                        source_task_id=cand.source_task_id,
+                        source_agent_slug=cand.source_agent_slug,
+                        metadata_json=cand.metadata_json,
+                        actor_type="agent",
+                        actor_id=cand.source_agent_slug or "orchestrator",
+                        reason=f"Ingested from execution {execution_id_str}",
+                    )
+                    ingested_ids.append(str(mem.id))
+                except Exception as cand_err:
+                    logger.warning("Error persisting candidate '%s': %s", cand.summary, cand_err)
+                    errors.append(f"{cand.summary}: {str(cand_err)}")
+                    await session.rollback()
+
+            await session.commit()
+
+        logger.info(
+            "Successfully ingested %d memories for project %s (execution %s)",
+            len(ingested_ids),
+            project_id_str,
+            execution_id_str,
+        )
+
+        return {
+            "ingestion_status": "completed" if not errors else "partial",
+            "knowledge_candidates": [c.model_dump() for c in candidates],
+            "ingested_memory_ids": ingested_ids,
+            "ingestion_errors": errors,
+        }
+    except Exception as e:
+        logger.error("Knowledge ingestion failed: %s", e)
+        return {
+            "ingestion_status": "failed",
+            "knowledge_candidates": [c.model_dump() for c in candidates],
+            "ingested_memory_ids": ingested_ids,
+            "ingestion_errors": [str(e)],
+        }
+
+
 async def complete_node(state: OrchestrationState) -> dict[str, Any]:
     logger.info("Workflow execution complete for objective: %s", state.get("objective"))
     return {"status": "completed"}
@@ -448,7 +663,7 @@ def route_after_dispatch(state: OrchestrationState) -> Literal["verify"]:
 
 def route_after_artifact(
     state: OrchestrationState,
-) -> Literal["approval_check", "complete", "__end__"]:
+) -> Literal["approval_check", "ingest_knowledge", "__end__"]:
     if state.get("status") == "failed" or state.get("failed_task_ids"):
         return "__end__"
 
@@ -456,7 +671,7 @@ def route_after_artifact(
     completed_ids = set(state.get("completed_task_ids", []))
 
     if len(completed_ids) == len(tasks) and len(tasks) > 0:
-        return "complete"
+        return "ingest_knowledge"
 
     return "approval_check"
 
@@ -465,14 +680,17 @@ def build_orchestrator_graph():
     """Builds and compiles the stateful LangGraph workflow."""
     workflow = StateGraph(OrchestrationState)
 
+    workflow.add_node("retrieve_knowledge", retrieve_knowledge_node)
     workflow.add_node("plan", plan_node)
     workflow.add_node("approval_check", approval_check_node)
     workflow.add_node("dispatch_task", dispatch_task_node)
     workflow.add_node("verify", verify_node)
     workflow.add_node("artifact", artifact_node)
+    workflow.add_node("ingest_knowledge", ingest_knowledge_node)
     workflow.add_node("complete", complete_node)
 
-    workflow.set_entry_point("plan")
+    workflow.set_entry_point("retrieve_knowledge")
+    workflow.add_edge("retrieve_knowledge", "plan")
     workflow.add_edge("plan", "approval_check")
 
     workflow.add_conditional_edges(
@@ -492,11 +710,12 @@ def build_orchestrator_graph():
         route_after_artifact,
         {
             "approval_check": "approval_check",
-            "complete": "complete",
+            "ingest_knowledge": "ingest_knowledge",
             "__end__": END,
         },
     )
 
+    workflow.add_edge("ingest_knowledge", "complete")
     workflow.add_edge("complete", END)
 
     return workflow.compile()

@@ -67,3 +67,15 @@ class QueryProcessor:
         if not clean_tokens:
             return None
         return " & ".join(clean_tokens)
+
+    @classmethod
+    def build_or_tsquery_terms(cls, processed: ProcessedQuery) -> str | None:
+        """Builds a formatted websearch tsquery string using significant tokens joined by OR."""
+        if processed.is_empty or not processed.tokens:
+            return None
+        sig_tokens = [t for t in processed.tokens if len(re.sub(r"[^\w]", "", t)) >= 3]
+        if not sig_tokens:
+            sig_tokens = [t for t in processed.tokens if re.sub(r"[^\w]", "", t)]
+        if not sig_tokens:
+            return None
+        return " OR ".join(sig_tokens[:10])

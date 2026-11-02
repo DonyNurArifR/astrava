@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.memory import ProjectMemory
 from app.services.retrieval.metadata_filter import MetadataFilter
-from app.services.retrieval.query_processor import ProcessedQuery
+from app.services.retrieval.query_processor import ProcessedQuery, QueryProcessor
 from app.services.retrieval.ranker import RetrievalRanker
 from app.services.retrieval.schemas import MemoryRetrievalFilter, ScoredMemory
 
@@ -73,15 +73,23 @@ class MemoryRetriever:
             + " "
             + func.coalesce(ProjectMemory.content, ""),
         )
-        tsquery_expr = func.websearch_to_tsquery("english", clean_text)
-        rank_expr = func.ts_rank_cd(tsv_expr, tsquery_expr)
+        tsquery_and_expr = func.websearch_to_tsquery("english", clean_text)
 
-        # Match either tsquery or case-insensitive keyword substring for code tokens
-        text_matches: list[Any] = [tsv_expr.op("@@")(tsquery_expr)]
-        if processed_query.tokens:
-            primary_token = processed_query.tokens[0]
-            text_matches.append(ProjectMemory.summary.ilike(f"%{primary_token}%"))
-            text_matches.append(ProjectMemory.content.ilike(f"%{primary_token}%"))
+        # Match either exact tsquery or OR-based tsquery across significant tokens
+        text_matches: list[Any] = [tsv_expr.op("@@")(tsquery_and_expr)]
+        or_query_terms = QueryProcessor.build_or_tsquery_terms(processed_query)
+        if or_query_terms:
+            tsquery_or_expr = func.websearch_to_tsquery("english", or_query_terms)
+            text_matches.append(tsv_expr.op("@@")(tsquery_or_expr))
+            rank_expr = func.ts_rank_cd(tsv_expr, tsquery_or_expr)
+        else:
+            rank_expr = func.ts_rank_cd(tsv_expr, tsquery_and_expr)
+
+        # Match case-insensitive keyword substrings for significant tokens
+        sig_tokens = [t for t in processed_query.tokens if len(t) >= 3]
+        for token in sig_tokens[:5]:
+            text_matches.append(ProjectMemory.summary.ilike(f"%{token}%"))
+            text_matches.append(ProjectMemory.content.ilike(f"%{token}%"))
 
         combined_filter = and_(*base_filters, or_(*text_matches))
 

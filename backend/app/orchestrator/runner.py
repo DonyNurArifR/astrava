@@ -121,7 +121,13 @@ class OrchestrationRunner:
                 for node_name, node_output in event.items():
                     if node_output and isinstance(node_output, dict):
                         current_state.update(node_output)
-                    if node_name in ("plan", "artifact", "complete"):
+                    if node_name in (
+                        "retrieve_knowledge",
+                        "plan",
+                        "artifact",
+                        "ingest_knowledge",
+                        "complete",
+                    ):
                         await OrchestrationRunner._sync_state_to_db(
                             db, execution.id, project_id, current_state
                         )
@@ -206,7 +212,7 @@ class OrchestrationRunner:
                 for node_name, node_output in event.items():
                     if node_output and isinstance(node_output, dict):
                         current_state.update(node_output)
-                    if node_name in ("artifact", "complete"):
+                    if node_name in ("artifact", "ingest_knowledge", "complete"):
                         await OrchestrationRunner._sync_state_to_db(
                             db, execution_id, execution.project_id, current_state
                         )
@@ -395,6 +401,14 @@ class OrchestrationRunner:
             await WorkflowService.record_event(
                 db, execution_id, "pipeline_completed", {"tasks_count": len(tasks)}
             )
+            if state.get("ingested_memory_ids") and not state.get("_memories_event_recorded"):
+                await WorkflowService.record_event(
+                    db,
+                    execution_id,
+                    "pipeline_memories_ingested",
+                    {"count": len(state["ingested_memory_ids"])},
+                )
+                state["_memories_event_recorded"] = True
         elif state_status == "failed" or state.get("failed_task_ids"):
             await WorkflowService.update_execution_status(
                 db,

@@ -22,3 +22,13 @@ class OrchestrationState(TypedDict, total=False):
     task_db_ids: dict[str, str]
     synced_usage_count: int
     error: str | None
+    # Project Intelligence & Memory (V1.3 M1.3-5)
+    retrieved_memories: list[dict[str, Any]]
+    retrieved_artifacts: list[dict[str, Any]]
+    retrieval_context: str
+    retrieval_metadata: dict[str, Any]
+    retrieval_error: str | None
+    knowledge_candidates: list[dict[str, Any]]
+    ingestion_status: str
+    ingested_memory_ids: list[str]
+    ingestion_errors: list[str]

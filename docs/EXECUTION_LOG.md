@@ -413,3 +413,31 @@
 - **Documentation:**
   - Updated `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (ADR-008), `docs/PROGRESS.md`, `docs/EXECUTION_LOG.md`.
   - Authored `docs/V1_3_M4_RELEASE_REPORT.md`.
+
+### Milestone M1.3-5: LangGraph Workflow Memory Integration Complete
+- **Architecture & Assessment:**
+  - Formulated ADR-009 ("LangGraph Workflow Memory Integration with Idempotent Ingestion & Pre-Planning Retrieval").
+  - Extended `OrchestrationState` with 9 typed fields: `retrieved_memories`, `retrieved_artifacts`, `retrieval_context`, `retrieval_metadata`, `retrieval_error`, `knowledge_candidates`, `ingestion_status`, `ingested_memory_ids`, `ingestion_errors`.
+- **Pre-Planning Retrieval Integration:**
+  - Added `retrieve_knowledge_node` as entry point before `plan_node` in `backend/app/orchestrator/workflow_graph.py`.
+  - Configured graceful error tolerance: failures log warnings and fall back to clean empty state without halting execution.
+  - Enhanced `QueryProcessor`, `MemoryRetriever`, and `ArtifactRetriever` with OR-based `websearch_to_tsquery` across significant tokens and token ILIKE checks to support multi-word natural language objectives while preserving ranking fidelity.
+  - Updated `PlannerService.generate_plan` and `StructuredPlan` to accept and incorporate bounded `retrieval_context`.
+  - Updated `_execute_single_task` to inject bounded project intelligence into downstream agent execution prompts.
+- **Post-Execution Knowledge Extraction & Ingestion:**
+  - Implemented `KnowledgeExtractor` (`backend/app/orchestrator/knowledge_extraction.py`): extracts milestones, architectural decisions, constraints, and discoveries.
+  - Enforced strict provenance rules: tasks backed by passing deterministic QA verification get `AGENT_VERIFIED` (`confidence_score=0.95`, `is_verified=True`); unverified agent assertions get `AGENT_CONCLUSION` (`confidence_score=0.70`, `is_verified=False`).
+  - Added `ingest_knowledge_node` executed after all task waves complete (`route_after_artifact` -> `ingest_knowledge` -> `complete_node` -> `END`).
+  - Idempotency & crash recovery: checks `source_execution_id` against PostgreSQL `project_memories` prior to insertion to prevent duplicate records upon retry or recovery.
+  - Foreign key safety: verified `WorkflowExecution` row existence before persisting foreign key references.
+  - Synced runner state transitions and recorded `pipeline_memories_ingested` event in `WorkflowExecution.events`.
+- **Testing & Quality Assurance:**
+  - Created `backend/tests/test_workflow_memory_integration.py` with 8 integration tests covering pre-planning retrieval, error tolerance, prompt injection, verified provenance, unverified conclusions, failed pipeline bypass, retry idempotency, and approval pause/resume context preservation.
+  - Full backend regression suite: 71/71 tests passing (12.64s).
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 81 backend files.
+  - Frontend: 8/8 test suites (10 tests) passing, 0 Oxlint warnings, production bundle clean.
+- **Documentation:**
+  - Documented Section 6.4 in `docs/ARCHITECTURE.md`.
+  - Documented ADR-009 in `docs/DECISIONS.md`.
+  - Updated `docs/PROGRESS.md` (M1.3-5 marked COMPLETE).
+  - Authored `docs/V1_3_M5_RELEASE_REPORT.md`.

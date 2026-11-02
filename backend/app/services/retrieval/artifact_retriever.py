@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.artifact import Artifact
 from app.services.artifact_intelligence_service import ArtifactIntelligenceService
 from app.services.retrieval.metadata_filter import MetadataFilter
-from app.services.retrieval.query_processor import ProcessedQuery
+from app.services.retrieval.query_processor import ProcessedQuery, QueryProcessor
 from app.services.retrieval.ranker import RetrievalRanker
 from app.services.retrieval.schemas import ArtifactRetrievalFilter, ScoredArtifact
 
@@ -85,14 +85,21 @@ class ArtifactRetriever:
             "english",
             func.coalesce(Artifact.name, "") + " " + func.coalesce(Artifact.file_path, ""),
         )
-        tsquery_expr = func.websearch_to_tsquery("english", clean_text)
-        rank_expr = func.ts_rank_cd(tsv_expr, tsquery_expr)
+        tsquery_and_expr = func.websearch_to_tsquery("english", clean_text)
 
-        text_matches: list[Any] = [tsv_expr.op("@@")(tsquery_expr)]
-        if processed_query.tokens:
-            primary_token = processed_query.tokens[0]
-            text_matches.append(Artifact.name.ilike(f"%{primary_token}%"))
-            text_matches.append(Artifact.file_path.ilike(f"%{primary_token}%"))
+        text_matches: list[Any] = [tsv_expr.op("@@")(tsquery_and_expr)]
+        or_query_terms = QueryProcessor.build_or_tsquery_terms(processed_query)
+        if or_query_terms:
+            tsquery_or_expr = func.websearch_to_tsquery("english", or_query_terms)
+            text_matches.append(tsv_expr.op("@@")(tsquery_or_expr))
+            rank_expr = func.ts_rank_cd(tsv_expr, tsquery_or_expr)
+        else:
+            rank_expr = func.ts_rank_cd(tsv_expr, tsquery_and_expr)
+
+        sig_tokens = [t for t in processed_query.tokens if len(t) >= 3]
+        for token in sig_tokens[:5]:
+            text_matches.append(Artifact.name.ilike(f"%{token}%"))
+            text_matches.append(Artifact.file_path.ilike(f"%{token}%"))
 
         stmt = (
             select(Artifact, rank_expr.label("raw_rank"))

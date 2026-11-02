@@ -37,6 +37,7 @@ class StructuredPlan(BaseModel):
     tasks: list[PlannedTask] = Field(default_factory=list)
     execution_stages: list[list[str]] = Field(default_factory=list)
     is_valid_dag: bool = True
+    retrieval_context: str | None = None
 
 
 class PlannerService:
@@ -100,6 +101,7 @@ class PlannerService:
         objective: str,
         studio_type: StudioType = StudioType.SAAS,
         understanding: ObjectiveUnderstandingResponse | None = None,
+        retrieval_context: str | None = None,
     ) -> StructuredPlan:
         """
         Generates a validated structured execution plan based on the objective,
@@ -413,6 +415,9 @@ class PlannerService:
         stages = cls.validate_and_compute_stages(tasks)
         selected_agents = list({t.assigned_agent_slug for t in tasks})
 
+        if retrieval_context:
+            strategy_summary = f"{strategy_summary} [Informed by persistent project memory]"
+
         return StructuredPlan(
             project_id=project_id,
             objective=objective,
@@ -423,4 +428,5 @@ class PlannerService:
             tasks=tasks,
             execution_stages=stages,
             is_valid_dag=True,
+            retrieval_context=retrieval_context,
         )
