@@ -10,7 +10,7 @@ written in the same transaction as the memory change they describe.
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.memory import MemoryAuditAction, MemoryAuditLog
@@ -66,6 +66,47 @@ class MemoryAuditService:
         )
         result = await db.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def list_by_memory_paginated(
+        db: AsyncSession,
+        memory_id: uuid.UUID,
+        project_id: uuid.UUID,
+        page: int = 1,
+        page_size: int = 50,
+        order: str = "desc",
+    ) -> tuple[list[MemoryAuditLog], int]:
+        """Return paginated audit entries for one memory, scoped to the project."""
+        if page < 1:
+            raise ValueError("page must be >= 1.")
+        if page_size < 1 or page_size > 100:
+            raise ValueError("page_size must be between 1 and 100.")
+
+        conditions = [
+            MemoryAuditLog.memory_id == memory_id,
+            MemoryAuditLog.project_id == project_id,
+        ]
+
+        count_stmt = select(func.count(MemoryAuditLog.id)).where(*conditions)
+        total_count = (await db.execute(count_stmt)).scalar_one() or 0
+
+        order_clause = (
+            MemoryAuditLog.created_at.desc()
+            if order.lower() == "desc"
+            else MemoryAuditLog.created_at.asc()
+        )
+        offset = (page - 1) * page_size
+        items_stmt = (
+            select(MemoryAuditLog)
+            .where(*conditions)
+            .order_by(order_clause, MemoryAuditLog.id.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        result = await db.execute(items_stmt)
+        items = list(result.scalars().all())
+
+        return items, total_count
 
     @staticmethod
     async def list_by_project(

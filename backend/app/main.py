@@ -6,10 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.agents import router as agents_router
 from app.api.v1.approvals import router as approvals_router
+from app.api.v1.artifacts import project_artifacts_router
 from app.api.v1.artifacts import router as artifacts_router
 from app.api.v1.executions import router as executions_router
 from app.api.v1.health import router as health_router
 from app.api.v1.intelligence import router as intelligence_router
+from app.api.v1.memories import router as memories_router
 from app.api.v1.orchestrator import router as orchestrator_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.tasks import router as tasks_router
@@ -38,7 +40,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     description="ASTRAVA: AI Creation and Orchestration Platform — From vision to execution.",
-    version="1.2.0",
+    version="1.3.0",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -63,6 +65,8 @@ app.include_router(workflows_router, prefix="/api/v1")
 app.include_router(executions_router, prefix="/api/v1")
 app.include_router(approvals_router, prefix="/api/v1")
 app.include_router(artifacts_router, prefix="/api/v1")
+app.include_router(project_artifacts_router, prefix="/api/v1")
+app.include_router(memories_router, prefix="/api/v1")
 app.include_router(intelligence_router, prefix="/api/v1")
 
 

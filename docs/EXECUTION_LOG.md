@@ -441,3 +441,30 @@
   - Documented ADR-009 in `docs/DECISIONS.md`.
   - Updated `docs/PROGRESS.md` (M1.3-5 marked COMPLETE).
   - Authored `docs/V1_3_M5_RELEASE_REPORT.md`.
+
+### Milestone M1.3-6: REST APIs & Schemas for Project Intelligence Complete
+- **API Architecture & Design:**
+  - Designed REST API suite exposing project memories under `/api/v1/projects/{project_id}/memories` and artifact lineage under `/api/v1/projects/{project_id}/artifacts/{artifact_id}/lineage`.
+  - Maintained thin routers delegating all business logic to `MemoryService`, `MemoryAuditService`, and `ArtifactIntelligenceService`.
+  - Strict project boundary enforcement: verifies project existence on every endpoint, rejecting cross-project and non-existent queries with 404.
+- **Pydantic Schemas Implemented:**
+  - `backend/app/schemas/memory.py`: `MemoryCreateRequest` (with whitespace validators), `MemoryUpdateRequest` (`expected_revision`), `MemoryActionRequest`, `MemoryVerifyRequest`, `MemoryConflictResolveRequest`, `MemoryRead`, `MemoryConflictItem`, `MemoryAuditLogRead`, generic `PaginatedResponse[T]`.
+  - `backend/app/schemas/artifact.py`: updated `ArtifactRead` with lineage fields (`version`, `parent_artifact_id`, `superseded_by_id`, `verification_status`, `verification_details`).
+  - `backend/app/schemas/lineage.py`: `ArtifactLineageResponse`.
+- **Service Layer Extensions:**
+  - `MemoryService.list_and_count_memories`: database-side filtering (category, provenance, status, verification, conflict, search query, date bounds), pagination, deterministic sorting, and total count. Excludes superseded/archived records by default.
+  - `MemoryService.list_conflicts`: queries detected conflicts with partner memory details and pagination.
+  - `MemoryAuditService.list_by_memory_paginated`: paginated read-only access to immutable memory audit trails.
+- **Router Implementation:**
+  - Created `backend/app/api/v1/memories.py`: 10 distinct endpoints (list/filter, create, conflicts, detail, revision update with 409 Conflict protection, archive, restore, explicit verify, conflict resolve, audit trail).
+  - Enhanced `backend/app/api/v1/artifacts.py`: added `GET /projects/{project_id}/artifacts/{artifact_id}/lineage` and `GET /artifacts/{artifact_id}/lineage`.
+  - Registered routers in `backend/app/main.py`.
+- **Testing & Quality Assurance:**
+  - Created `backend/tests/test_memory_api.py` with 9 comprehensive FastAPI integration tests exercising real PostgreSQL transactions.
+  - Full backend regression suite: 80/80 tests passing (14.83s).
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 85 backend files.
+  - Frontend: 8/8 test suites (10 tests) passing, 0 Oxlint warnings, production bundle clean.
+- **Documentation:**
+  - Documented Section 6.5 in `docs/ARCHITECTURE.md`.
+  - Updated `docs/PROGRESS.md` (M1.3-6 marked COMPLETE).
+  - Authored `docs/V1_3_M6_RELEASE_REPORT.md`.

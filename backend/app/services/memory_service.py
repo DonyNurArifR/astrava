@@ -20,7 +20,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.memory import (
@@ -178,6 +178,173 @@ class MemoryService:
         stmt = stmt.order_by(ProjectMemory.created_at.desc(), ProjectMemory.id.desc()).limit(limit)
         result = await db.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def list_and_count_memories(
+        db: AsyncSession,
+        project_id: uuid.UUID,
+        category: MemoryCategory | str | None = None,
+        provenance_type: MemoryProvenanceType | str | None = None,
+        status: MemoryStatus | str | None = None,
+        is_verified: bool | None = None,
+        conflict_status: MemoryConflictStatus | str | None = None,
+        search_query: str | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        updated_after: datetime | None = None,
+        updated_before: datetime | None = None,
+        include_historical: bool = False,
+        page: int = 1,
+        page_size: int = 50,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> tuple[list[ProjectMemory], int]:
+        """List project memories with filtering, search, sorting, and total count for pagination."""
+        if page < 1:
+            raise ValueError("page must be >= 1.")
+        if page_size < 1 or page_size > 100:
+            raise ValueError("page_size must be between 1 and 100.")
+
+        conditions = [ProjectMemory.project_id == project_id]
+
+        if category is not None:
+            conditions.append(ProjectMemory.category == MemoryCategory(category))
+        if provenance_type is not None:
+            conditions.append(
+                ProjectMemory.provenance_type == MemoryProvenanceType(provenance_type)
+            )
+        if status is not None:
+            conditions.append(ProjectMemory.status == MemoryStatus(status))
+        elif not include_historical:
+            # By default exclude superseded, rejected, and archived memories
+            conditions.append(
+                ProjectMemory.status.in_([MemoryStatus.ACTIVE, MemoryStatus.PROPOSED])
+            )
+
+        if is_verified is not None:
+            conditions.append(ProjectMemory.is_verified == is_verified)
+
+        if conflict_status is not None:
+            conditions.append(
+                ProjectMemory.conflict_status == MemoryConflictStatus(conflict_status)
+            )
+
+        if created_after is not None:
+            conditions.append(ProjectMemory.created_at >= created_after)
+        if created_before is not None:
+            conditions.append(ProjectMemory.created_at <= created_before)
+        if updated_after is not None:
+            conditions.append(ProjectMemory.updated_at >= updated_after)
+        if updated_before is not None:
+            conditions.append(ProjectMemory.updated_at <= updated_before)
+
+        if search_query and search_query.strip():
+            clean_search = search_query.strip()
+            conditions.append(
+                or_(
+                    ProjectMemory.summary.ilike(f"%{clean_search}%"),
+                    ProjectMemory.content.ilike(f"%{clean_search}%"),
+                )
+            )
+
+        # Total count query
+        count_stmt = select(func.count(ProjectMemory.id)).where(*conditions)
+        total_count = (await db.execute(count_stmt)).scalar_one() or 0
+
+        # Sort mapping
+        sort_col_map = {
+            "created_at": ProjectMemory.created_at,
+            "updated_at": ProjectMemory.updated_at,
+            "revision": ProjectMemory.revision,
+            "confidence_score": ProjectMemory.confidence_score,
+            "summary": ProjectMemory.summary,
+        }
+        sort_col = sort_col_map.get(sort_by, ProjectMemory.created_at)
+        order_clause = sort_col.desc() if sort_order.lower() == "desc" else sort_col.asc()
+
+        offset = (page - 1) * page_size
+        items_stmt = (
+            select(ProjectMemory)
+            .where(*conditions)
+            .order_by(order_clause, ProjectMemory.id.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        result = await db.execute(items_stmt)
+        items = list(result.scalars().all())
+
+        return items, total_count
+
+    @staticmethod
+    async def list_conflicts(
+        db: AsyncSession,
+        project_id: uuid.UUID,
+        category: MemoryCategory | str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """List detected conflicts with partner memory details."""
+        if page < 1:
+            raise ValueError("page must be >= 1.")
+        if page_size < 1 or page_size > 100:
+            raise ValueError("page_size must be between 1 and 100.")
+
+        conditions = [
+            ProjectMemory.project_id == project_id,
+            ProjectMemory.conflict_status == MemoryConflictStatus.DETECTED,
+        ]
+        if category is not None:
+            conditions.append(ProjectMemory.category == MemoryCategory(category))
+
+        count_stmt = select(func.count(ProjectMemory.id)).where(*conditions)
+        total_count = (await db.execute(count_stmt)).scalar_one() or 0
+
+        offset = (page - 1) * page_size
+        items_stmt = (
+            select(ProjectMemory)
+            .where(*conditions)
+            .order_by(ProjectMemory.created_at.desc(), ProjectMemory.id.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        result = await db.execute(items_stmt)
+        memories = list(result.scalars().all())
+
+        # Collect partner IDs
+        partner_ids = [m.conflicting_memory_id for m in memories if m.conflicting_memory_id]
+        partners_map: dict[uuid.UUID, ProjectMemory] = {}
+        if partner_ids:
+            p_stmt = select(ProjectMemory).where(
+                ProjectMemory.project_id == project_id,
+                ProjectMemory.id.in_(partner_ids),
+            )
+            p_rows = list((await db.execute(p_stmt)).scalars().all())
+            partners_map = {p.id: p for p in p_rows}
+
+        items: list[dict[str, Any]] = []
+        for mem in memories:
+            partner = (
+                partners_map.get(mem.conflicting_memory_id) if mem.conflicting_memory_id else None
+            )
+            items.append(
+                {
+                    "memory_id": mem.id,
+                    "summary": mem.summary,
+                    "category": mem.category,
+                    "status": mem.status,
+                    "revision": mem.revision,
+                    "provenance_type": mem.provenance_type,
+                    "conflict_status": mem.conflict_status,
+                    "conflicting_memory_id": mem.conflicting_memory_id,
+                    "partner_summary": partner.summary if partner else None,
+                    "partner_status": partner.status if partner else None,
+                    "partner_provenance_type": partner.provenance_type if partner else None,
+                    "partner_revision": partner.revision if partner else None,
+                    "created_at": mem.created_at,
+                }
+            )
+
+        return items, total_count
 
     @staticmethod
     async def get_revision_history(

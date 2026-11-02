@@ -207,3 +207,22 @@ The workflow engine integrates persistent memory into the execution lifecycle vi
     - Before writing, checks if `source_execution_id` already persisted memories to PostgreSQL. If found, returns existing memory IDs without duplicating records.
     - Idempotently ignores reruns if state indicates `ingestion_status == "completed"`.
     - Creates immutable audit entries in `memory_audit_logs` for all created memories.
+
+### 6.5 REST APIs & Schemas for Project Intelligence
+The project intelligence capabilities are exposed via REST under `/api/v1/`:
+- **Architecture & Conventions:**
+  - Routers act as thin coordinators; all state transitions, validation, and audit writes are delegated directly to `MemoryService`, `MemoryAuditService`, and `ArtifactIntelligenceService`.
+  - Mandatory project isolation: every endpoint verifies project existence and validates that resources belong to `project_id`, returning 404 for missing or cross-project resources.
+  - Strict separation of request schemas (`MemoryCreateRequest`, `MemoryUpdateRequest`, `MemoryVerifyRequest`, `MemoryConflictResolveRequest`) and response schemas (`MemoryRead`, `MemoryConflictItem`, `MemoryAuditLogRead`, `ArtifactLineageResponse`).
+- **Endpoint Inventory:**
+  - `GET /api/v1/projects/{project_id}/memories`: List and filter memories with deterministic pagination, category/provenance/status filters, date bounds, search query, and default exclusion of historical records.
+  - `POST /api/v1/projects/{project_id}/memories`: Create memory with default user provenance (status 201). Prevents direct verification spoofing.
+  - `GET /api/v1/projects/{project_id}/memories/conflicts`: List detected conflicts with partner memory details.
+  - `GET /api/v1/projects/{project_id}/memories/{memory_id}`: Detail view of a project memory.
+  - `PATCH /api/v1/projects/{project_id}/memories/{memory_id}`: Creates immutable revision, resets verification on content change, and requires `expected_revision` for optimistic concurrency (returns 409 Conflict on mismatch).
+  - `POST /api/v1/projects/{project_id}/memories/{memory_id}/archive`: Soft-archive active memory.
+  - `POST /api/v1/projects/{project_id}/memories/{memory_id}/restore`: Restore archived memory back to ACTIVE.
+  - `POST /api/v1/projects/{project_id}/memories/{memory_id}/verify`: Explicit verification workflow; promotes `AGENT_CONCLUSION` to `VERIFIED_FINDING` with verifier identity and evidence details.
+  - `POST /api/v1/projects/{project_id}/memories/{memory_id}/resolve`: Resolves conflicts using `supersede`, `reject`, or `merge` strategies transactionally.
+  - `GET /api/v1/projects/{project_id}/memories/{memory_id}/audit`: Read-only, paginated audit trail. Mutation endpoints are prohibited.
+  - `GET /api/v1/projects/{project_id}/artifacts/{artifact_id}/lineage`: Returns full ancestry, children, and supersession graph. Also accessible via `/api/v1/artifacts/{artifact_id}/lineage`.

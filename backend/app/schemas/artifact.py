@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.artifact import ArtifactType
+from app.models.artifact import ArtifactType, ArtifactVerificationStatus
 
 
 class ArtifactCreate(BaseModel):
@@ -30,6 +30,11 @@ class ArtifactRead(BaseModel):
     mime_type: str
     file_size_bytes: int
     metadata_json: dict[str, Any]
+    version: int = 1
+    parent_artifact_id: uuid.UUID | None = None
+    superseded_by_id: uuid.UUID | None = None
+    verification_status: ArtifactVerificationStatus = ArtifactVerificationStatus.UNVERIFIED
+    verification_details: dict[str, Any] = {}
     created_at: datetime
     updated_at: datetime
 
