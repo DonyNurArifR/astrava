@@ -149,3 +149,36 @@ The workflow planner (`PlannerService`) transforms the interpreted objective int
   - Approvals
   - Intelligence
   - Settings
+
+---
+
+## 6. Persistent Project Intelligence & Knowledge Retrieval (V1.3)
+
+### 6.1 Persistent Project Memory
+ASTRAVA maintains persistent knowledge across separate execution workflows:
+- **10 Core Categories:** `objective`, `requirement`, `constraint`, `decision`, `discovery`, `preference`, `open_question`, `risk`, `milestone`, `rejected_approach`.
+- **4-Tier Provenance Hierarchy:**
+  - `user_provided` (Confidence: 1.00, Verified: True)
+  - `verified_finding` (Confidence: 0.95, Verified: True)
+  - `agent_conclusion` (Confidence: 0.70, Verified: False)
+  - `assumption` (Confidence: 0.50, Verified: False)
+- **Immutable Revision Chains:** Updates create revision `N+1` pointing to `previous_revision_id` and mark the previous revision `SUPERSEDED`. Verification is automatically reset on text modifications.
+- **Append-Only Audit Trail:** `MemoryAuditLog` records every creation, modification, verification, or conflict resolution with strict code-level immutability (`PermissionError` on update/delete).
+
+### 6.2 Artifact Lineage & Versioning
+- Artifacts track `version`, `parent_artifact_id`, `superseded_by_id`, and `verification_status`.
+- Cycle prevention protects against direct self-parenting (`parent_id <> id`) and multi-hop ancestry cycles (`A -> B -> C -> A`).
+- Supersession enforces strict forward version progression (`target.version > artifact.version`).
+- Rejects cross-project lineage links (`CROSS_PROJECT_LINEAGE_ERROR`).
+
+### 6.3 Modular Knowledge Retrieval Engine
+The retrieval engine operates under `backend/app/services/retrieval/`:
+- **`QueryProcessor`:** Sanitizes query text, enforces length bounds (max 500 chars), and extracts tokens for full-text search.
+- **`MetadataFilter`:** Constructs parameter-safe SQLAlchemy expressions enforcing mandatory `project_id` scoping and enum validation.
+- **`MemoryRetriever`:** Queries PostgreSQL 16 using GIN-indexed full-text search (`tsvector`/`tsquery`) with `ts_rank_cd` scoring and metadata filtering.
+- **`ArtifactRetriever`:** Searches project artifacts and enriches results with ancestry and supersession lineage via `ArtifactIntelligenceService`.
+- **`RetrievalRanker`:** Deterministic multi-signal ranking:
+  $$S = S_{\text{text}} \times (0.40 \cdot W_{\text{prov}} + 0.30 \cdot W_{\text{verif}} + 0.20 \cdot W_{\text{recency}} + 0.10 \cdot W_{\text{status}})$$
+  where text relevance serves as a dominant gating factor so that high provenance cannot rank irrelevant content above relevant findings.
+- **`ContextAssembler`:** Assembles structured Markdown prompt context strictly capped at a configurable character budget (default 4,000 characters). Preserves complete item boundaries, attribution chips, and reports omitted items.
+- **`RetrievalService`:** Public orchestration facade returning explainable `RetrievalResult` objects with execution timing and filter traces.

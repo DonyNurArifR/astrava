@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -89,6 +90,13 @@ class ProjectMemory(Base, UUIDMixin, TimestampMixin):
             name="ck_project_memories_no_self_conflict",
         ),
         Index("ix_project_memories_project_status_category", "project_id", "status", "category"),
+        Index(
+            "ix_project_memories_tsv",
+            text(
+                "to_tsvector('english'::regconfig, (coalesce(summary, ''::character varying)::text || ' '::text) || coalesce(content, ''::text))"
+            ),
+            postgresql_using="gin",
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(

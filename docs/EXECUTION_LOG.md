@@ -386,3 +386,30 @@
 - **Documentation:**
   - Authored `docs/V1_3_M3_RELEASE_REPORT.md`.
   - Updated `docs/PROGRESS.md` and `docs/EXECUTION_LOG.md`.
+
+### Milestone M1.3-4: Modular Knowledge Retrieval Engine Complete
+- **Architecture & Assessment:**
+  - Audited existing relational models, database session patterns, and migration state.
+  - Selected PostgreSQL 16 Full-Text Search with GIN expression indexes as the dependable baseline.
+  - Evaluated and rejected premature external vector databases and unpopulated pgvector embeddings (ADR-008).
+- **Database & Migration:**
+  - Generated and applied Alembic migration `07d25c09fdde_add_gin_full_text_indexes_for_retrieval.py`.
+  - Added GIN expression indexes: `ix_project_memories_tsv` on `project_memories` and `ix_artifacts_tsv` on `artifacts`.
+  - Verified migration upgrade, rollback (`downgrade f8d6aac5883a`), and re-upgrade with 0 errors. Verified `alembic check` clean.
+- **Engine Components Implemented (`backend/app/services/retrieval/`):**
+  - `schemas.py`: `RetrievalQuery`, `MemoryRetrievalFilter`, `ArtifactRetrievalFilter`, `ScoredMemory`, `ScoredArtifact`, `ContextAssemblySummary`, `RetrievalResult`.
+  - `query_processor.py`: validates query bounds (max 500 chars), rejects null bytes, normalizes whitespace, extracts alphanumeric search tokens.
+  - `metadata_filter.py`: constructs parameter-safe SQLAlchemy binary expressions enforcing mandatory `project_id` matching, enum validation, and lifecycle filters.
+  - `ranker.py`: deterministic multi-signal ranking incorporating PostgreSQL text relevance (`ts_rank_cd`), provenance weights (`user_provided: 1.0`, `verified_finding: 0.95`, `agent_conclusion: 0.70`, `assumption: 0.50`), verification boost, 30-day half-life recency decay, lifecycle weighting, and stable tie-breaking (`-composite_score, -created_at, id`).
+  - `memory_retriever.py`: database-side full-text search (`tsvector` & `tsquery`) and metadata filtering with bounded candidate fetching.
+  - `artifact_retriever.py`: project-scoped artifact search with lineage context enrichment reusing `ArtifactIntelligenceService`.
+  - `context_assembler.py`: formats structured Markdown prompt context strictly bounded by character budget (default 4,000 chars), preserving complete item boundaries and reporting omitted counts.
+  - `service.py`: `RetrievalService` public interface providing explainable search, ID lookups, and context packaging.
+- **Testing & Quality Assurance:**
+  - Added `backend/tests/test_retrieval_engine.py` with 10 real PostgreSQL integration tests.
+  - Backend regression: 63/63 tests passing (8.14s).
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 79 backend files.
+  - Frontend: 8/8 test suites (10 tests) passing, 0 Oxlint warnings, production bundle clean.
+- **Documentation:**
+  - Updated `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (ADR-008), `docs/PROGRESS.md`, `docs/EXECUTION_LOG.md`.
+  - Authored `docs/V1_3_M4_RELEASE_REPORT.md`.

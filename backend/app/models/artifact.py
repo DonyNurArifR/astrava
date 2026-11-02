@@ -2,7 +2,17 @@ import enum
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, BigInteger, CheckConstraint, Enum, ForeignKey, Integer, String, text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    CheckConstraint,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -43,6 +53,13 @@ class Artifact(Base, UUIDMixin, TimestampMixin):
             name="ck_artifacts_no_self_supersede",
         ),
         CheckConstraint("version >= 1", name="ck_artifacts_version_positive"),
+        Index(
+            "ix_artifacts_tsv",
+            text(
+                "to_tsvector('english'::regconfig, (coalesce(name, ''::character varying)::text || ' '::text) || coalesce(file_path, ''::character varying)::text)"
+            ),
+            postgresql_using="gin",
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
