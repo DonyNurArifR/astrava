@@ -950,6 +950,8 @@ class MemoryService:
         memory.verified_at = _utcnow()
         if memory.provenance_type == MemoryProvenanceType.AGENT_CONCLUSION:
             memory.provenance_type = MemoryProvenanceType.VERIFIED_FINDING
+        if memory.status == MemoryStatus.PROPOSED:
+            memory.status = MemoryStatus.ACTIVE
 
         await db.flush()
         await db.refresh(memory)

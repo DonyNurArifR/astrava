@@ -572,30 +572,28 @@ async def ingest_knowledge_node(state: OrchestrationState) -> dict[str, Any]:
         async with AsyncSessionLocal() as session:
             # Verify execution foreign key if execution_uuid is provided
             valid_execution_id: uuid.UUID | None = None
+            existing_by_sig: dict[tuple[str, str, str], ProjectMemory] = {}
             if execution_uuid:
                 exec_row = await session.get(WorkflowExecution, execution_uuid)
                 if exec_row is not None:
                     valid_execution_id = execution_uuid
-                    # Check if this execution already persisted memories (crash recovery protection)
+                    # Index existing memories for this execution by logical candidate signature
                     existing_stmt = select(ProjectMemory).where(
                         ProjectMemory.project_id == project_uuid,
                         ProjectMemory.source_execution_id == execution_uuid,
                     )
                     existing = list((await session.execute(existing_stmt)).scalars().all())
-                    if existing:
-                        logger.info(
-                            "Found %d existing persisted memories for execution %s; skipping duplicate insertion.",
-                            len(existing),
-                            execution_id_str,
-                        )
-                        return {
-                            "ingestion_status": "completed",
-                            "knowledge_candidates": [c.model_dump() for c in candidates],
-                            "ingested_memory_ids": [str(m.id) for m in existing],
-                            "ingestion_errors": [],
-                        }
+                    for m in existing:
+                        sig = (str(m.category), str(m.summary), str(m.source_task_id or ""))
+                        existing_by_sig[sig] = m
 
             for cand in candidates:
+                cand_sig = (str(cand.category), str(cand.summary), str(cand.source_task_id or ""))
+                if cand_sig in existing_by_sig:
+                    # Logical candidate was already ingested for this execution; reuse existing record without duplicating
+                    ingested_ids.append(str(existing_by_sig[cand_sig].id))
+                    continue
+
                 try:
                     mem = await MemoryService.create_memory(
                         session,
@@ -615,6 +613,7 @@ async def ingest_knowledge_node(state: OrchestrationState) -> dict[str, Any]:
                         reason=f"Ingested from execution {execution_id_str}",
                     )
                     ingested_ids.append(str(mem.id))
+                    existing_by_sig[cand_sig] = mem
                 except Exception as cand_err:
                     logger.warning("Error persisting candidate '%s': %s", cand.summary, cand_err)
                     errors.append(f"{cand.summary}: {str(cand_err)}")

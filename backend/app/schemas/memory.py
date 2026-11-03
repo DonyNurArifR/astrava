@@ -100,6 +100,14 @@ class MemoryVerifyRequest(BaseModel):
     )
     reason: str | None = Field(None, description="Verification reason or approval notes")
 
+    @field_validator("verified_by")
+    @classmethod
+    def validate_verified_by(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("verified_by cannot be empty or whitespace only")
+        return cleaned
+
 
 class MemoryConflictResolveRequest(BaseModel):
     """Request payload to resolve a detected memory conflict."""

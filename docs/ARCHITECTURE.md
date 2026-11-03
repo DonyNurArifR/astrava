@@ -254,3 +254,25 @@ The project intelligence user interface is integrated directly into the `/intell
     - Interactive tree nodes allow navigating up and down derivation branches.
   - **`Model Telemetry & Usage`:** Preserved view maintaining token consumption, compute duration, cost estimations, and granular model execution audit tables.
 
+### 6.7 End-to-End Project Intelligence Integration, Verification Semantics & Crash Resilience (M1.3-8 Acceptance)
+The complete persistent project intelligence lifecycle was formally hardened and verified across multi-execution pipelines, database failure modes, and performance boundaries:
+- **Decoupled Verification Protocol:**
+  - Automated agent conclusions during pipeline runs are strictly classified as `AGENT_CONCLUSION` with `confidence_score = 0.70` and `is_verified = False`.
+  - While automated QA test results are captured in `metadata_json["qa_tests_passed"] = True`, agent outputs never self-promote to `VERIFIED_FINDING`.
+  - Promotion to `VERIFIED_FINDING` requires explicit verification via `POST /api/v1/projects/{project_id}/memories/{memory_id}/verify` with mandatory non-empty verifier attribution (`verified_by`).
+- **Ingestion Idempotency on Retries & Crashes:**
+  - Ingestion avoids coarse blanket execution skips by tracking candidate signatures: `(category, summary, source_task_id)`.
+  - Real OS-level crash testing (`SIGKILL` immediately following database memory commit before LangGraph checkpoint persistence) verified that resumed processes correctly detect pre-existing signatures, preventing duplicate memory rows (6 -> 6) and duplicate audit records (6 -> 6).
+- **Audit Survival on Hard Deletion:**
+  - `MemoryAuditLog` rows survive hard deletion of memories via PostgreSQL `ondelete="SET NULL"`.
+  - Service queries (`MemoryAuditService.list_by_memory` and `list_by_memory_paginated`) locate logs via direct foreign key match or JSON snapshot inspection (`previous_state->>'id'` or `new_state->>'id'`), preserving complete forensic provenance even if rows are expunged.
+- **Empirical Retrieval Performance:**
+  - Benchmarked on PostgreSQL 16 over 1,000 realistic technical memories with 100 random search queries:
+    - Min latency: 30.14 ms
+    - p50 latency: 34.00 ms
+    - p90 latency: 38.69 ms
+    - p95 latency: 39.64 ms
+    - p99 latency: 41.43 ms
+    - Max latency: 43.16 ms
+  - 100% of context packages strictly honored the 4,000-character prompt budget without mid-sentence truncation or cross-project data leakage.
+

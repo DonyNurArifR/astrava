@@ -60,3 +60,19 @@
   3. *Strict Provenance Classification:* Only findings with automated verification evidence receive `verified_finding`; unverified agent outputs remain `agent_conclusion`.
   4. *Two-Tier Idempotency Guard:* Ingestion checks in-memory `ingestion_status == "completed"` and checks PostgreSQL `ProjectMemory.source_execution_id == execution_id`. A crash between DB commit and checkpoint persistence does not create duplicate memories or audit records on restart.
 - **Consequences:** Safe resumption across interrupts and process crashes; zero duplicate memories; seamless knowledge reuse across separate workflow executions.
+
+## ADR-010: Decoupled Verification Semantics & Verifier Attribution
+- **Status:** Accepted
+- **Context:** Automated agents executing multi-step pipelines cannot self-certify their conclusions as `verified_finding` merely because automated QA tests passed on code artifacts. Self-attestation degrades memory trust and introduces circular confidence inflation.
+- **Decision:**
+  1. *Automated Ingestion Boundary:* Knowledge extraction from automated pipelines strictly assigns `MemoryProvenanceType.AGENT_CONCLUSION` with `confidence_score = 0.70` and `is_verified = False`. Passing QA tests are noted as metadata (`qa_tests_passed: true`) without altering provenance.
+  2. *Explicit Verification Gate:* Promotion from `AGENT_CONCLUSION` to `VERIFIED_FINDING` (and activation from `PROPOSED` to `ACTIVE`) requires explicit invocation of `verify_memory` with mandatory non-empty verifier attribution (`verified_by`). Whitespace-only or missing verifier strings are rejected with HTTP 422.
+- **Consequences:** Pristine audit trails; unambiguous provenance boundaries; prevents autonomous hallucination loops from contaminating the long-term project knowledge bank.
+
+## ADR-011: Conflict Resolution Governance & Audit Survival on Hard Deletion
+- **Status:** Accepted
+- **Context:** Knowledge evolution produces contradictory proposals over time. Silent overwrites corrupt historical context, and accidental or deliberate memory deletion must not destroy the audit trail.
+- **Decision:**
+  1. *Transactional Conflict Resolution:* Colliding summaries trigger `conflict_status = DETECTED`. Resolution supports three deterministic strategies: `supersede` (marks one memory superseded, preserves both), `reject` (marks one memory rejected, leaves partner active), and `merge` (creates a synthesized active record, resolving the conflict).
+  2. *Audit Trail Persistence on Hard Deletion:* `memory_audit_logs.memory_id` uses `ondelete="SET NULL"`. Audit queries match by foreign key or by querying JSON snapshots (`previous_state->>'id'` / `new_state->>'id'`).
+- **Consequences:** Absolute historical auditability; zero data loss during memory lifecycle changes; compliance with enterprise security requirements.

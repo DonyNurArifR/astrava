@@ -499,3 +499,36 @@
   - Updated `docs/PROGRESS.md` (marked M1.3-7 COMPLETE).
   - Authored `docs/V1_3_M7_RELEASE_REPORT.md`.
 
+## 2026-11-03 — V1.3-M8: End-to-End Integration, Reliability, and V1.3 Acceptance
+- **Role Alignment:** Lead AI Architect & Independent Reviewer: Gemini. Executor: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Architectural Findings & Hardening Implemented:**
+  - **AF-1 (Decoupled Verification Semantics):** Refactored `backend/app/orchestrator/knowledge_extraction.py` to classify all agent extractions strictly as `MemoryProvenanceType.AGENT_CONCLUSION` with `confidence_score = 0.70` and `is_verified = False`. QA test success is recorded in `metadata_json["qa_tests_passed"] = True` without self-verifying. Added field validator on `MemoryVerifyRequest.verified_by` in `backend/app/schemas/memory.py` rejecting blank/whitespace strings (HTTP 422). Updated `MemoryService.verify_memory` to promote `PROPOSED` to `ACTIVE` upon explicit authorized verification.
+  - **AF-2 (Ingestion Idempotency Granularity):** Replaced coarse execution-level blanket skip in `backend/app/orchestrator/workflow_graph.py` with candidate signature tracking `(category, summary, source_task_id)`. Prevents duplicate memory creation on retries while allowing new candidate batches in the same execution.
+  - **AF-3 (Audit Log Hard Deletion Survival):** Updated `backend/app/services/memory_audit_service.py` to locate audit entries via foreign key or JSON snapshot examination (`previous_state->>'id'` / `new_state->>'id'`), ensuring audit records remain queryable after memory hard deletion (`ondelete="SET NULL"`).
+  - **AF-4 (Crash Boundary Ingestion Recovery):** Tested process crash immediately following database memory commit before LangGraph checkpoint persistence with real OS-level `SIGKILL` (Process 1: PID 70068, Process 2: PID 70138). Verified 0 duplicate memories (6 -> 6), 0 duplicate audit logs (6 -> 6), and clean workflow completion.
+- **Cross-Execution Intelligence Verification (`backend/tests/test_cross_execution_intelligence.py`):**
+  - **Execution A:** Establishes durable project knowledge (architecture decisions, milestones, artifact v1). Explicit operator verification promotes decision to `VERIFIED_FINDING`.
+  - **Execution B:** Retrieves verified architectural decision before planning; LangGraph pre-planning retrieval populates prompt context budget. Creates derived artifact v2 linked to v1 with supersession. Project isolation verified (unrelated project retrieves 0 items).
+  - **Execution C:** Introduces conflicting security proposal under identical summary. Detects conflict status `DETECTED` bidirectionally. Resolves conflict via `MERGE` into unified dual-layer policy (`MemoryStatus.ACTIVE`, `MemoryConflictStatus.RESOLVED`). Full audit trail verified.
+- **Empirical Performance Benchmarks (`scratch/benchmark_retrieval_performance.py`):**
+  - Seeded 1,000 realistic project memories in PostgreSQL 16 (0.13s).
+  - Ran 100 retrieval queries via `RetrievalService.search` (top_k=5):
+    - Min: 30.14 ms
+    - p50: 34.00 ms
+    - p90: 38.69 ms
+    - p95: 39.64 ms
+    - p99: 41.43 ms
+    - Max: 43.16 ms
+  - 100% of context packages strictly honored the 4,000 character prompt budget.
+  - Zero leftover rows after automated cleanup.
+- **Verification & Acceptance:**
+  - Backend regression: 88/88 pytest tests passing in 14.07s.
+  - Frontend test suite: 9/9 test files (16 tests) passing in 1.46s.
+  - Frontend build & lint: `npm run lint` (0 errors), `npm run build` (170ms) clean.
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 87 backend files.
+- **Documentation & Reporting:**
+  - Added Section 6.7 in `docs/ARCHITECTURE.md`.
+  - Added ADR-010 and ADR-011 in `docs/DECISIONS.md`.
+  - Updated `docs/ROADMAP.md` and `docs/PROGRESS.md` marking V1.3 COMPLETE.
+  - Authored comprehensive `docs/V1_3_FINAL_ACCEPTANCE_REPORT.md`.
+

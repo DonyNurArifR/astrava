@@ -87,16 +87,9 @@ class KnowledgeExtractor:
             f"Generated {len(artifacts)} deliverables across {len(completed_ids)} completed tasks."
         )
 
-        provenance = (
-            MemoryProvenanceType.VERIFIED_FINDING
-            if overall_verified
-            else MemoryProvenanceType.AGENT_CONCLUSION
-        )
-        conf_score = 0.95 if overall_verified else 0.70
-
         milestone_meta = {
             "source": "workflow_completion",
-            "verified_by": "astrava-verification-engine" if overall_verified else None,
+            "qa_tests_passed": overall_verified,
             "deliverable_count": len(artifacts),
         }
 
@@ -105,9 +98,9 @@ class KnowledgeExtractor:
                 category=MemoryCategory.MILESTONE,
                 summary=milestone_summary,
                 content=milestone_content,
-                provenance_type=provenance,
-                confidence_score=conf_score,
-                is_verified=overall_verified,
+                provenance_type=MemoryProvenanceType.AGENT_CONCLUSION,
+                confidence_score=0.70,
+                is_verified=False,
                 source_task_id=None,
                 source_agent_slug="orchestrator",
                 metadata_json=milestone_meta,
@@ -156,35 +149,28 @@ class KnowledgeExtractor:
             if candidate_summary.lower() in seen_summaries:
                 continue
 
-            # Determine task-specific verification
-            task_verified = False
+            # Record task-specific QA execution without conflating with formal verification
+            task_qa_passed = False
             for vr in verif_results:
                 if vr.get("task_id") == tid:
                     report = vr.get("report", {})
                     if report.get("overall_passed") is True:
-                        task_verified = True
+                        task_qa_passed = True
                         break
-
-            task_provenance = (
-                MemoryProvenanceType.VERIFIED_FINDING
-                if task_verified
-                else MemoryProvenanceType.AGENT_CONCLUSION
-            )
-            task_conf = 0.95 if task_verified else 0.70
 
             candidates.append(
                 ExtractedMemoryCandidate(
                     category=category,
                     summary=candidate_summary,
                     content=clean_content,
-                    provenance_type=task_provenance,
-                    confidence_score=task_conf,
-                    is_verified=task_verified,
+                    provenance_type=MemoryProvenanceType.AGENT_CONCLUSION,
+                    confidence_score=0.70,
+                    is_verified=False,
                     source_task_id=tid,
                     source_agent_slug=agent_slug,
                     metadata_json={
                         "task_title": title,
-                        "verified_by": "astrava-verification-engine" if task_verified else None,
+                        "qa_tests_passed": task_qa_passed,
                     },
                 )
             )

@@ -10,13 +10,23 @@ written in the same transaction as the memory change they describe.
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.memory import MemoryAuditAction, MemoryAuditLog
 
 _IMMUTABLE_UPDATE_MSG = "Memory audit logs are immutable; updates are not permitted."
 _IMMUTABLE_DELETE_MSG = "Memory audit logs are immutable; deletes are not permitted."
+
+
+def _memory_match_condition(memory_id: uuid.UUID):
+    """Matches audit rows directly or via JSON snapshot if memory row was hard deleted."""
+    uid_str = str(memory_id)
+    return or_(
+        MemoryAuditLog.memory_id == memory_id,
+        func.json_extract_path_text(MemoryAuditLog.previous_state, "id") == uid_str,
+        func.json_extract_path_text(MemoryAuditLog.new_state, "id") == uid_str,
+    )
 
 
 class MemoryAuditService:
@@ -59,7 +69,7 @@ class MemoryAuditService:
         stmt = (
             select(MemoryAuditLog)
             .where(
-                MemoryAuditLog.memory_id == memory_id,
+                _memory_match_condition(memory_id),
                 MemoryAuditLog.project_id == project_id,
             )
             .order_by(MemoryAuditLog.created_at.asc(), MemoryAuditLog.id.asc())
@@ -83,7 +93,7 @@ class MemoryAuditService:
             raise ValueError("page_size must be between 1 and 100.")
 
         conditions = [
-            MemoryAuditLog.memory_id == memory_id,
+            _memory_match_condition(memory_id),
             MemoryAuditLog.project_id == project_id,
         ]
 

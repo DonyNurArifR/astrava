@@ -251,7 +251,8 @@ async def test_successful_execution_ingests_memories_and_audits(
     milestone_mem = next((m for m in memories if m.category == MemoryCategory.MILESTONE), None)
     assert milestone_mem is not None
     assert milestone_mem.source_execution_id == execution.id
-    assert milestone_mem.status == MemoryStatus.ACTIVE
+    assert milestone_mem.status in (MemoryStatus.ACTIVE, MemoryStatus.PROPOSED)
+    assert milestone_mem.provenance_type == MemoryProvenanceType.AGENT_CONCLUSION
 
     # Check that audit log entries were recorded
     audit_stmt = select(MemoryAuditLog).where(
@@ -264,11 +265,11 @@ async def test_successful_execution_ingests_memories_and_audits(
 
 @pytest.mark.asyncio
 async def test_provenance_classification_rules(db_session: AsyncSession):
-    """Verifies that QA-verified tasks yield verified_finding while standard agent outputs yield agent_conclusion."""
+    """Verifies that extracted agent conclusions remain unverified until an explicit authorized verification action."""
     exec_id = str(uuid.uuid4())
     proj_id = str(uuid.uuid4())
 
-    # State with 1 unverified strategic task and 1 verified QA task
+    # State with 1 unverified strategic task and 1 task with passing automated tests
     state: OrchestrationState = {
         "execution_id": exec_id,
         "project_id": proj_id,
@@ -298,19 +299,20 @@ async def test_provenance_classification_rules(db_session: AsyncSession):
     assert arch_cand.is_verified is False
     assert arch_cand.confidence_score == 0.70
 
-    # Now simulate verified QA execution
-    state_verified: OrchestrationState = dict(state)
-    state_verified["verification_results"] = [
+    # Passing automated QA test captures qa_tests_passed in metadata, but does NOT self-verify textual assertions
+    state_qa: OrchestrationState = dict(state)
+    state_qa["verification_results"] = [
         {
             "task_id": "task-arch",
             "report": {"overall_passed": True},  # Automated verification passed
         }
     ]
-    candidates_verif = KnowledgeExtractor.extract_from_execution(state_verified)
-    arch_cand_verif = next(c for c in candidates_verif if c.source_task_id == "task-arch")
-    assert arch_cand_verif.provenance_type == MemoryProvenanceType.VERIFIED_FINDING
-    assert arch_cand_verif.is_verified is True
-    assert arch_cand_verif.confidence_score == 0.95
+    candidates_qa = KnowledgeExtractor.extract_from_execution(state_qa)
+    arch_cand_qa = next(c for c in candidates_qa if c.source_task_id == "task-arch")
+    assert arch_cand_qa.provenance_type == MemoryProvenanceType.AGENT_CONCLUSION
+    assert arch_cand_qa.is_verified is False
+    assert arch_cand_qa.confidence_score == 0.70
+    assert arch_cand_qa.metadata_json.get("qa_tests_passed") is True
 
 
 @pytest.mark.asyncio
