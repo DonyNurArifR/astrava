@@ -532,3 +532,38 @@
   - Updated `docs/ROADMAP.md` and `docs/PROGRESS.md` marking V1.3 COMPLETE.
   - Authored comprehensive `docs/V1_3_FINAL_ACCEPTANCE_REPORT.md`.
 
+## 2026-11-03 — V1.4-M1: Security & Concurrency Hardening
+- **Role Alignment:** Lead AI Architect & Independent Reviewer: Gemini. Executor: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Security hardening of verifier identity (TR-01) and durable concurrency & idempotency hardening of knowledge ingestion (TR-02).
+- **Security Hardening (TR-01 / R1):**
+  - Created `backend/app/core/auth.py` defining `OperatorContext`, `get_operator_context`, and `require_authorized_verifier`.
+  - Added configuration settings `DEFAULT_OPERATOR_NAME = "Abstract"` and `OPERATOR_API_KEY = None` (with API key enforcement when configured via `X-ASTRAVA-API-KEY` or Bearer token).
+  - Updated `backend/app/schemas/memory.py`: `MemoryVerifyRequest.verified_by` made optional (`None`).
+  - Updated `backend/app/api/v1/memories.py`: Endpoint `POST /projects/{project_id}/memories/{memory_id}/verify` uses `require_authorized_verifier`. Explicit verifier impersonation attempts are rejected with HTTP 403 Forbidden. Authentic operator identity is propagated to `MemoryService.verify_memory` and logged into `MemoryAuditLog` with authentic `actor_id` and `actor_type`.
+  - Updated `frontend/src/api/client.ts`: `verifyMemory` sends `X-ASTRAVA-ACTOR-NAME: data.verified_by` header so UI-entered names match operator context.
+  - Authored `backend/tests/test_v1_4_security.py` covering all 19 security scenarios (19/19 passed).
+- **Concurrency & Idempotency Hardening (TR-02 / R2):**
+  - Updated `backend/app/models/memory.py`: Added `IngestionOperationStatus` enum, `IngestionOperation` model (unique constraint on `project_id, operation_token`), `fingerprint` column and `ingestion_operation_id` foreign key on `ProjectMemory`, and partial unique index `uq_project_memories_fingerprint` on `(project_id, fingerprint)` where `fingerprint IS NOT NULL AND status IN ('ACTIVE', 'PROPOSED')`.
+  - Authored Alembic migration `backend/alembic/versions/7a8e1b2c3d4e_add_ingestion_operations_and_memory_fingerprint.py`. Tested upgrade, downgrade, and re-upgrade against live PostgreSQL container.
+  - Implemented `compute_candidate_fingerprint` in `backend/app/orchestrator/knowledge_extraction.py` (SHA-256 over `project_id:category:summary:source_task_id`).
+  - Updated `MemoryService.create_memory` to accept and persist `fingerprint` and `ingestion_operation_id`.
+  - Redesigned `ingest_knowledge_node` in `backend/app/orchestrator/workflow_graph.py`:
+    - Generates stable `operation_token`.
+    - Short-circuits immediately if operation is already `COMPLETED`.
+    - Handles concurrent operation races: losing workers poll the winner via fresh database sessions and return the completed memory IDs.
+    - Uses SQLAlchemy nested savepoints (`async with session.begin_nested():`) for per-candidate insert isolation, preventing session corruption if a single candidate collides or fails.
+    - Prevents clobbering completed status in error handlers.
+  - Authored `backend/tests/test_v1_4_concurrency_idempotency.py` covering all 11 concurrency scenarios (11/11 passed).
+- **Verification & Acceptance:**
+  - Backend pytest regression: **118/118 tests passed** in 17.65s (from 88 to 118 tests, +30 new tests).
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 90 backend files.
+  - Frontend: 9/9 test suites (16 tests) passed in 1.20s; `npm run lint` 0 errors; `npm run build` completed cleanly in 207ms.
+  - Database schema: current migration head `7a8e1b2c3d4e`.
+- **Documentation & Reporting:**
+  - Added Section 7 in `docs/ARCHITECTURE.md`.
+  - Added ADR-012 and ADR-013 in `docs/DECISIONS.md`.
+  - Updated `docs/PROGRESS.md` with M1.4-1 tasks marked COMPLETE.
+  - Updated `docs/V1_4_TECHNICAL_RISKS.md` marking TR-01 and TR-02 RESOLVED.
+  - Authored `docs/V1_4_M1_RELEASE_REPORT.md`.
+
+

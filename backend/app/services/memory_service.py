@@ -522,6 +522,8 @@ class MemoryService:
         actor_type: str = "system",
         actor_id: str | None = None,
         reason: str | None = None,
+        fingerprint: str | None = None,
+        ingestion_operation_id: uuid.UUID | None = None,
     ) -> ProjectMemory:
         """Create a memory, or return the existing exact duplicate.
 
@@ -589,6 +591,8 @@ class MemoryService:
             conflict_status=MemoryConflictStatus.NONE,
             conflicting_memory_id=None,
             metadata_json=meta,
+            fingerprint=fingerprint,
+            ingestion_operation_id=ingestion_operation_id,
         )
         db.add(memory)
         await db.flush()

@@ -276,3 +276,40 @@ The complete persistent project intelligence lifecycle was formally hardened and
     - Max latency: 43.16 ms
   - 100% of context packages strictly honored the 4,000-character prompt budget without mid-sentence truncation or cross-project data leakage.
 
+---
+
+## 7. V1.4 Security & Concurrency Hardening (M1.4-1)
+
+### 7.1 Trusted Operator Identity & Verifier Attribution
+To eliminate the risk of spoofed verifier attribution (V1.3 Risk R1 / TR-01), ASTRAVA V1.4 introduces a trusted operator authentication framework in `backend/app/core/auth.py`:
+- **Operator Context (`OperatorContext`):**
+  - Represents the authenticated actor with fields: `operator_id`, `display_name`, `actor_type` (`"user"`, `"agent"`, or `"system"`), `is_authenticated`, and `roles`.
+  - Resolved per request via FastAPI dependency `get_operator_context`.
+  - **Single-User Local Mode:** When `OPERATOR_API_KEY` is not set in environment or configuration, local operator access defaults to `settings.DEFAULT_OPERATOR_NAME` (`"Abstract"`) with `actor_type="user"`. Custom actor display names can be specified via header `X-ASTRAVA-ACTOR-NAME`.
+  - **Secured Mode:** When `OPERATOR_API_KEY` is configured, requests must supply a matching `X-ASTRAVA-API-KEY` header (or `Bearer` token). Missing or mismatched keys are rejected immediately with HTTP 401 Unauthorized.
+- **Enforced Verifier Verification (`require_authorized_verifier`):**
+  - Verifier authorization dependency attached to `POST /api/v1/projects/{project_id}/memories/{memory_id}/verify`.
+  - Forbids client-supplied impersonation: if the request body specifies `verified_by`, it must strictly match the authenticated operator's `display_name` (case-insensitive). Any mismatched spoofing attempt is rejected with HTTP 403 Forbidden.
+  - If `verified_by` is omitted in the request body, it is automatically derived from `operator.display_name`.
+  - The authentic operator identity is immutably passed into `MemoryService.verify_memory` and logged into `MemoryAuditLog` with authentic `actor_id` (`operator.operator_id`) and `actor_type` (`operator.actor_type`), guaranteeing tamper-proof audit trails.
+
+### 7.2 Durable Ingestion Idempotency & Database Concurrency Hardening
+To resolve concurrent ingestion races and rollback transaction corruption (V1.3 Risk R2 / TR-02), V1.4 implements a multi-layer relational deduplication and synchronization engine:
+- **Deterministic Candidate Fingerprinting:**
+  - Every knowledge candidate receives a deterministic SHA-256 fingerprint generated via `compute_candidate_fingerprint(project_id, category, summary, source_task_id)`.
+  - Persisted in `ProjectMemory.fingerprint` (String 64).
+- **Database-Enforced Partial Unique Index:**
+  - Index `uq_project_memories_fingerprint` on `(project_id, fingerprint)` with partial predicate:
+    `WHERE fingerprint IS NOT NULL AND status IN ('ACTIVE', 'PROPOSED')`.
+  - Guarantees at the PostgreSQL relational engine level that concurrent processes or retried pipelines cannot insert duplicate active/proposed memories under any interleaving.
+- **Ingestion Operations Tracking (`IngestionOperation`):**
+  - Relational model tracking pipeline ingestion lifecycles with unique constraint `uq_ingestion_operations_project_token` on `(project_id, operation_token)`.
+  - State machine: `PENDING` -> `IN_PROGRESS` -> `COMPLETED` / `FAILED`.
+  - Stores `ingested_count`, `duplicate_count`, `error_message`, and timestamps (`started_at`, `completed_at`).
+  - `ProjectMemory.ingestion_operation_id` links ingested memories directly to the operation for relational traceability.
+- **Concurrent Race Resolution & Nested Savepoints:**
+  - When concurrent workers race to ingest the same candidate batch, the first worker acquires and initiates the `IngestionOperation`.
+  - Losing workers encountering `IntegrityError` on the operation token enter an asynchronous polling loop with backoff using fresh database sessions, waiting for the winner to complete and returning the winning result without running redundant extraction or failing.
+  - Individual memory creation within `ingest_knowledge_node` is wrapped in SQLAlchemy nested savepoints (`async with session.begin_nested():`). A duplicate collision or candidate error rolls back only the savepoint, leaving preceding successful candidates intact in the transaction.
+
+

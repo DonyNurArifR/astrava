@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -73,6 +74,12 @@ class MemoryAuditAction(enum.StrEnum):
     CONFLICT_RESOLVED = "conflict_resolved"
 
 
+class IngestionOperationStatus(enum.StrEnum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class ProjectMemory(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "project_memories"
     __table_args__ = (
@@ -90,6 +97,14 @@ class ProjectMemory(Base, UUIDMixin, TimestampMixin):
             name="ck_project_memories_no_self_conflict",
         ),
         Index("ix_project_memories_project_status_category", "project_id", "status", "category"),
+        Index(
+            "uq_project_memories_fingerprint",
+            "project_id",
+            "fingerprint",
+            unique=True,
+            # Enum columns persist member NAMES (ACTIVE/PROPOSED), not lowercase values.
+            postgresql_where=text("fingerprint IS NOT NULL AND status IN ('ACTIVE', 'PROPOSED')"),
+        ),
         Index(
             "ix_project_memories_tsv",
             text(
@@ -160,6 +175,13 @@ class ProjectMemory(Base, UUIDMixin, TimestampMixin):
     )
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    ingestion_operation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("ingestion_operations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # Relationships
     project: Mapped["Project"] = relationship("Project")
@@ -180,6 +202,44 @@ class ProjectMemory(Base, UUIDMixin, TimestampMixin):
         back_populates="memory",
         passive_deletes=True,
     )
+
+
+class IngestionOperation(Base, UUIDMixin, TimestampMixin):
+    """Tracks one idempotent knowledge-ingestion run for a workflow execution."""
+
+    __tablename__ = "ingestion_operations"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "operation_token", name="uq_ingestion_operations_project_token"
+        ),
+        Index("ix_ingestion_operations_project_execution", "project_id", "execution_id"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workflow_executions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    operation_token: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[IngestionOperationStatus] = mapped_column(
+        Enum(IngestionOperationStatus, native_enum=False),
+        default=IngestionOperationStatus.PENDING,
+        server_default=IngestionOperationStatus.PENDING.name,
+        nullable=False,
+    )
+    candidate_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    ingested_memory_ids: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'"), nullable=False
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MemoryAuditLog(Base, UUIDMixin):

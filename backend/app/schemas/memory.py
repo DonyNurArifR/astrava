@@ -89,10 +89,9 @@ class MemoryActionRequest(BaseModel):
 class MemoryVerifyRequest(BaseModel):
     """Request payload to mark a memory as verified."""
 
-    verified_by: str = Field(
-        ...,
-        min_length=1,
-        description="Identifier or name of the authorizing verifier (operator or QA agent)",
+    verified_by: str | None = Field(
+        None,
+        description="Optional verifier label. Server enforces authenticated operator context.",
     )
     verification_details: dict[str, Any] | None = Field(
         default=None,
@@ -102,7 +101,9 @@ class MemoryVerifyRequest(BaseModel):
 
     @field_validator("verified_by")
     @classmethod
-    def validate_verified_by(cls, v: str) -> str:
+    def validate_verified_by(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         cleaned = v.strip()
         if not cleaned:
             raise ValueError("verified_by cannot be empty or whitespace only")

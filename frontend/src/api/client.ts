@@ -251,7 +251,10 @@ export const api = {
   ) =>
     fetch(`${API_BASE}/projects/${projectId}/memories/${memoryId}/verify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(data.verified_by ? { 'X-ASTRAVA-ACTOR-NAME': data.verified_by } : {}),
+      },
       body: JSON.stringify(data),
     }).then(r => handleResponse<ProjectMemory>(r)),
 

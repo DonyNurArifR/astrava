@@ -3,19 +3,24 @@ import json
 import logging
 import re
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.execution import WorkflowExecution
-from app.models.memory import ProjectMemory
+from app.models.memory import IngestionOperation, IngestionOperationStatus, ProjectMemory
 from app.models.project import StudioType
 from app.models.task import ExecutorType
-from app.orchestrator.knowledge_extraction import KnowledgeExtractor
+from app.orchestrator.knowledge_extraction import (
+    KnowledgeExtractor,
+    compute_candidate_fingerprint,
+)
 from app.orchestrator.planner import PlannerService
 from app.orchestrator.state import OrchestrationState
 from app.providers.base import ProviderRequest, ProviderStatus
@@ -529,8 +534,42 @@ async def artifact_node(state: OrchestrationState) -> dict[str, Any]:
     }
 
 
+async def _mark_ingestion_failed(
+    project_uuid: uuid.UUID, operation_token: str, error_message: str
+) -> None:
+    """Record a top-level ingestion failure on its operation row in a fresh session."""
+    try:
+        async with AsyncSessionLocal() as session:
+            op = (
+                await session.execute(
+                    select(IngestionOperation).where(
+                        IngestionOperation.project_id == project_uuid,
+                        IngestionOperation.operation_token == operation_token,
+                    )
+                )
+            ).scalar_one_or_none()
+            if op is not None and op.status == IngestionOperationStatus.COMPLETED:
+                # A concurrent winner already finished; never clobber its completed state.
+                return
+            if op is None:
+                op = IngestionOperation(
+                    project_id=project_uuid,
+                    operation_token=operation_token,
+                )
+                session.add(op)
+            op.status = IngestionOperationStatus.FAILED
+            op.error_message = error_message
+            await session.commit()
+    except Exception as mark_err:
+        logger.error("Could not record ingestion failure for %s: %s", operation_token, mark_err)
+
+
 async def ingest_knowledge_node(state: OrchestrationState) -> dict[str, Any]:
-    """Extracts and persists durable project knowledge after successful execution."""
+    """Extracts and persists durable project knowledge after successful execution.
+
+    Idempotent per ``operation_token``: a completed IngestionOperation short-circuits,
+    and each candidate is keyed by a fingerprint so re-runs reuse existing memories.
+    """
     # 1. In-memory check: if already completed, pass through
     if state.get("ingestion_status") == "completed" and state.get("ingested_memory_ids"):
         logger.info("Knowledge ingestion already completed for this execution.")
@@ -564,6 +603,11 @@ async def ingest_knowledge_node(state: OrchestrationState) -> dict[str, Any]:
             "ingestion_errors": [],
         }
 
+    # Without an execution id, fall back to a unique token so unrelated runs never collide.
+    operation_token = state.get("ingestion_operation_token") or (
+        f"{execution_uuid}:final" if execution_uuid else f"{uuid.uuid4()}:final"
+    )
+
     # 3. Database idempotency check and persistence
     ingested_ids: list[str] = []
     errors: list[str] = []
@@ -572,53 +616,194 @@ async def ingest_knowledge_node(state: OrchestrationState) -> dict[str, Any]:
         async with AsyncSessionLocal() as session:
             # Verify execution foreign key if execution_uuid is provided
             valid_execution_id: uuid.UUID | None = None
-            existing_by_sig: dict[tuple[str, str, str], ProjectMemory] = {}
             if execution_uuid:
                 exec_row = await session.get(WorkflowExecution, execution_uuid)
                 if exec_row is not None:
                     valid_execution_id = execution_uuid
-                    # Index existing memories for this execution by logical candidate signature
-                    existing_stmt = select(ProjectMemory).where(
-                        ProjectMemory.project_id == project_uuid,
-                        ProjectMemory.source_execution_id == execution_uuid,
+
+            existing_op = (
+                await session.execute(
+                    select(IngestionOperation).where(
+                        IngestionOperation.project_id == project_uuid,
+                        IngestionOperation.operation_token == operation_token,
                     )
-                    existing = list((await session.execute(existing_stmt)).scalars().all())
-                    for m in existing:
-                        sig = (str(m.category), str(m.summary), str(m.source_task_id or ""))
-                        existing_by_sig[sig] = m
+                )
+            ).scalar_one_or_none()
+
+            if existing_op is not None and existing_op.status == IngestionOperationStatus.COMPLETED:
+                logger.info(
+                    "Idempotent reuse: ingestion operation %s already completed",
+                    operation_token,
+                )
+                return {
+                    "ingestion_status": "completed",
+                    "ingested_memory_ids": list(existing_op.ingested_memory_ids or []),
+                    "knowledge_candidates": [c.model_dump() for c in candidates],
+                    "ingestion_errors": [],
+                }
+
+            if existing_op is not None and existing_op.status == IngestionOperationStatus.PENDING:
+                # Another worker is already executing this operation; wait for it to complete.
+                winner: IngestionOperation | None = None
+                for _ in range(60):
+                    await asyncio.sleep(0.05)
+                    async with AsyncSessionLocal() as poll_session:
+                        winner = (
+                            await poll_session.execute(
+                                select(IngestionOperation).where(
+                                    IngestionOperation.project_id == project_uuid,
+                                    IngestionOperation.operation_token == operation_token,
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        if (
+                            winner is not None
+                            and winner.status == IngestionOperationStatus.COMPLETED
+                        ):
+                            break
+                        if winner is not None and winner.status == IngestionOperationStatus.FAILED:
+                            break
+                if winner is not None and winner.status == IngestionOperationStatus.COMPLETED:
+                    logger.info(
+                        "Concurrent ingestion for %s completed by peer; reusing its result",
+                        operation_token,
+                    )
+                    return {
+                        "ingestion_status": "completed",
+                        "ingested_memory_ids": list(winner.ingested_memory_ids or []),
+                        "knowledge_candidates": [c.model_dump() for c in candidates],
+                        "ingestion_errors": [],
+                    }
+
+            if existing_op is None:
+                op = IngestionOperation(
+                    project_id=project_uuid,
+                    execution_id=valid_execution_id,
+                    operation_token=operation_token,
+                    status=IngestionOperationStatus.PENDING,
+                    candidate_count=len(candidates),
+                )
+                session.add(op)
+            else:
+                # Retry of a failed operation: reset it and reuse the row.
+                op = existing_op
+                op.status = IngestionOperationStatus.PENDING
+                op.error_message = None
+                op.candidate_count = len(candidates)
+
+            # Persist the operation row before candidate work so failures can be recorded.
+            try:
+                await session.commit()
+            except IntegrityError:
+                # A concurrent worker won the insert for this operation_token.
+                await session.rollback()
+                winner: IngestionOperation | None = None
+                for _ in range(60):
+                    await asyncio.sleep(0.05)
+                    async with AsyncSessionLocal() as poll_session:
+                        winner = (
+                            await poll_session.execute(
+                                select(IngestionOperation).where(
+                                    IngestionOperation.project_id == project_uuid,
+                                    IngestionOperation.operation_token == operation_token,
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        if (
+                            winner is not None
+                            and winner.status == IngestionOperationStatus.COMPLETED
+                        ):
+                            break
+                        if winner is not None and winner.status == IngestionOperationStatus.FAILED:
+                            break
+                if winner is not None and winner.status == IngestionOperationStatus.COMPLETED:
+                    logger.info(
+                        "Concurrent ingestion for %s won the race; reusing its result",
+                        operation_token,
+                    )
+                    return {
+                        "ingestion_status": "completed",
+                        "ingested_memory_ids": list(winner.ingested_memory_ids or []),
+                        "knowledge_candidates": [c.model_dump() for c in candidates],
+                        "ingestion_errors": [],
+                    }
+                logger.warning(
+                    "Concurrent ingestion for %s did not complete (status=%s)",
+                    operation_token,
+                    winner.status if winner is not None else None,
+                )
+                return {
+                    "ingestion_status": "failed",
+                    "knowledge_candidates": [c.model_dump() for c in candidates],
+                    "ingested_memory_ids": [],
+                    "ingestion_errors": ["concurrent_ingestion_not_completed"],
+                }
 
             for cand in candidates:
-                cand_sig = (str(cand.category), str(cand.summary), str(cand.source_task_id or ""))
-                if cand_sig in existing_by_sig:
-                    # Logical candidate was already ingested for this execution; reuse existing record without duplicating
-                    ingested_ids.append(str(existing_by_sig[cand_sig].id))
+                fingerprint = compute_candidate_fingerprint(
+                    project_uuid,
+                    cand.category,
+                    cand.summary,
+                    source_execution_id=valid_execution_id,
+                    source_task_id=cand.source_task_id,
+                )
+                existing_id = (
+                    await session.execute(
+                        select(ProjectMemory.id).where(
+                            ProjectMemory.project_id == project_uuid,
+                            ProjectMemory.fingerprint == fingerprint,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing_id is not None:
+                    ingested_ids.append(str(existing_id))
                     continue
 
                 try:
-                    mem = await MemoryService.create_memory(
-                        session,
-                        project_id=project_uuid,
-                        category=cand.category,
-                        summary=cand.summary,
-                        content=cand.content,
-                        provenance_type=cand.provenance_type,
-                        confidence_score=cand.confidence_score,
-                        is_verified=cand.is_verified,
-                        source_execution_id=valid_execution_id,
-                        source_task_id=cand.source_task_id,
-                        source_agent_slug=cand.source_agent_slug,
-                        metadata_json=cand.metadata_json,
-                        actor_type="agent",
-                        actor_id=cand.source_agent_slug or "orchestrator",
-                        reason=f"Ingested from execution {execution_id_str}",
-                    )
+                    # Savepoint: a failing candidate rolls back only itself.
+                    async with session.begin_nested():
+                        mem = await MemoryService.create_memory(
+                            session,
+                            project_id=project_uuid,
+                            category=cand.category,
+                            summary=cand.summary,
+                            content=cand.content,
+                            provenance_type=cand.provenance_type,
+                            confidence_score=cand.confidence_score,
+                            is_verified=cand.is_verified,
+                            source_execution_id=valid_execution_id,
+                            source_task_id=cand.source_task_id,
+                            source_agent_slug=cand.source_agent_slug,
+                            metadata_json=cand.metadata_json,
+                            actor_type="agent",
+                            actor_id=cand.source_agent_slug or "orchestrator",
+                            reason=f"Ingested from execution {execution_id_str}",
+                            fingerprint=fingerprint,
+                            ingestion_operation_id=op.id,
+                        )
                     ingested_ids.append(str(mem.id))
-                    existing_by_sig[cand_sig] = mem
+                except IntegrityError:
+                    # A concurrent worker already committed this exact fingerprint.
+                    existing_id = (
+                        await session.execute(
+                            select(ProjectMemory.id).where(
+                                ProjectMemory.project_id == project_uuid,
+                                ProjectMemory.fingerprint == fingerprint,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if existing_id is not None:
+                        ingested_ids.append(str(existing_id))
+                    else:
+                        errors.append(f"{cand.summary}: duplicate fingerprint conflict")
                 except Exception as cand_err:
                     logger.warning("Error persisting candidate '%s': %s", cand.summary, cand_err)
                     errors.append(f"{cand.summary}: {str(cand_err)}")
-                    await session.rollback()
 
+            op.status = IngestionOperationStatus.COMPLETED
+            op.ingested_memory_ids = ingested_ids
+            op.completed_at = datetime.now(UTC)
+            op.error_message = "; ".join(errors) if errors else None
             await session.commit()
 
         logger.info(
@@ -636,10 +821,12 @@ async def ingest_knowledge_node(state: OrchestrationState) -> dict[str, Any]:
         }
     except Exception as e:
         logger.error("Knowledge ingestion failed: %s", e)
+        await _mark_ingestion_failed(project_uuid, operation_token, str(e))
         return {
             "ingestion_status": "failed",
             "knowledge_candidates": [c.model_dump() for c in candidates],
-            "ingested_memory_ids": ingested_ids,
+            # Uncommitted memories were rolled back, so report none as persisted.
+            "ingested_memory_ids": [],
             "ingestion_errors": [str(e)],
         }
 

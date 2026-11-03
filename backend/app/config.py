@@ -43,5 +43,11 @@ class Settings(BaseSettings):
     REQUIRE_APPROVAL_FOR_DESTRUCTIVE: bool = True
     REQUIRE_APPROVAL_FOR_DEPLOYMENT: bool = True
 
+    # Trusted operator identity (V1.4 M1.4-1).
+    # When OPERATOR_API_KEY is None, the server runs in local development mode and
+    # trusts the X-ASTRAVA-ACTOR-NAME header (defaulting to DEFAULT_OPERATOR_NAME).
+    DEFAULT_OPERATOR_NAME: str = "Abstract"
+    OPERATOR_API_KEY: str | None = None
+
 
 settings = Settings()

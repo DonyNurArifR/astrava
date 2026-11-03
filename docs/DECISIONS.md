@@ -76,3 +76,27 @@
   1. *Transactional Conflict Resolution:* Colliding summaries trigger `conflict_status = DETECTED`. Resolution supports three deterministic strategies: `supersede` (marks one memory superseded, preserves both), `reject` (marks one memory rejected, leaves partner active), and `merge` (creates a synthesized active record, resolving the conflict).
   2. *Audit Trail Persistence on Hard Deletion:* `memory_audit_logs.memory_id` uses `ondelete="SET NULL"`. Audit queries match by foreign key or by querying JSON snapshots (`previous_state->>'id'` / `new_state->>'id'`).
 - **Consequences:** Absolute historical auditability; zero data loss during memory lifecycle changes; compliance with enterprise security requirements.
+
+## ADR-012: Trusted Operator Authentication Context & Verifier Identity Protection
+- **Status:** Accepted
+- **Context:** In V1.3, `POST /api/v1/projects/{project_id}/memories/{memory_id}/verify` accepted arbitrary unauthenticated `verified_by` strings from HTTP clients. This allowed any client or script to impersonate arbitrary verifiers or promote unverified agent conclusions under false identity, corrupting the forensic audit trail (V1.3 Risk R1 / TR-01).
+- **Decision:**
+  1. *Operator Context Dependency (`backend/app/core/auth.py`):* Implement `OperatorContext` and FastAPI dependency `get_operator_context` resolving authentic actor identity per request.
+  2. *Single-User Local Mode & Secured Mode:* If `OPERATOR_API_KEY` is not set, authenticate as local default operator (`settings.DEFAULT_OPERATOR_NAME = "Abstract"`), with display name customizable via `X-ASTRAVA-ACTOR-NAME`. When `OPERATOR_API_KEY` is configured, enforce mandatory API key validation (`X-ASTRAVA-API-KEY` or Bearer token), rejecting unauthenticated calls with HTTP 401.
+  3. *Enforced Verification Authorization:* Dependency `require_authorized_verifier` guards the memory verification route. Direct client impersonation (supplying a `verified_by` name that does not match the authenticated operator's display name) is strictly forbidden and rejected with HTTP 403 Forbidden.
+  4. *Immutable Audit Attribution:* Derive `verified_by` directly from the authenticated `operator.display_name` if omitted, and log authentic `actor_id` (`operator.operator_id`) and `actor_type` (`operator.actor_type`) to `MemoryAuditLog`.
+- **Consequences:** Verifier spoofing is completely eliminated; audit trails record authentic, non-repudiable operator attribution; backwards compatible with single-user local development while seamlessly locking down in secured deployments.
+
+## ADR-013: Two-Tier Ingestion Idempotency, Operation Token Tracking & Partial Unique Index Deduplication
+- **Status:** Accepted
+- **Context:** V1.3 relied on Python-side pre-query deduplication before inserting extracted knowledge. Concurrent pipeline runs or workers racing for the same project/execution would both observe 0 rows and insert duplicates. Furthermore, transaction rollback on a single candidate error aborted preceding successful candidates in the session (V1.3 Risk R2 / TR-02).
+- **Decision:**
+  1. *Candidate Fingerprinting:* Compute deterministic SHA-256 fingerprint for every candidate based on `(project_id, category, summary, source_task_id)` and store in `ProjectMemory.fingerprint`.
+  2. *Relational Partial Unique Index:* Enforce database-level uniqueness via PostgreSQL partial index:
+     `CREATE UNIQUE INDEX uq_project_memories_fingerprint ON project_memories (project_id, fingerprint) WHERE fingerprint IS NOT NULL AND status IN ('ACTIVE', 'PROPOSED')`.
+     Duplicate insertions under concurrency or retries are rejected at the database level.
+  3. *Ingestion Operation Tracking (`IngestionOperation`):* Record pipeline ingestion attempts under a unique `(project_id, operation_token)` constraint. The state machine (`PENDING` -> `IN_PROGRESS` -> `COMPLETED` / `FAILED`) prevents duplicate pipeline ingestion.
+  4. *Concurrent Race Polling:* In the event of concurrent execution races where losing workers hit an `IntegrityError` on the operation token, losers enter an async backoff polling loop using a fresh session to wait for the winner to complete, returning the winning result without failing or repeating work.
+  5. *Nested Transaction Savepoints:* Wrap candidate inserts inside `async with session.begin_nested():`. If an individual candidate fails or collides with a concurrent insert, only that candidate's savepoint is rolled back, leaving preceding valid candidates intact.
+- **Consequences:** Relational engine-level guarantee against duplicate memory creation; zero transaction corruption on candidate errors; seamless handling of concurrent pipeline execution races.
+

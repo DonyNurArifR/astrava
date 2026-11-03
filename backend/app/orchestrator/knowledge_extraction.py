@@ -5,6 +5,7 @@ discoveries, milestones) from completed workflow tasks and verification results
 with strict provenance classification.
 """
 
+import hashlib
 import logging
 import uuid
 from typing import Any
@@ -25,6 +26,21 @@ STRATEGIC_AGENTS = {
     "scriptwriter",
     "product-researcher",
 }
+
+
+def compute_candidate_fingerprint(
+    project_id: uuid.UUID,
+    category: MemoryCategory | str,
+    summary: str,
+    source_execution_id: uuid.UUID | None = None,
+    source_task_id: str | None = None,
+) -> str:
+    """Stable SHA256 identity for a knowledge candidate, used for idempotent ingestion."""
+    raw = (
+        f"{project_id}:{category}:{summary.strip().lower()}:"
+        f"{source_execution_id or ''}:{source_task_id or ''}"
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class ExtractedMemoryCandidate(BaseModel):

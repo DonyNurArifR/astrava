@@ -404,8 +404,11 @@ async def test_memory_explicit_verification_endpoint(db_session: AsyncSession):
             },
             "reason": "Confirmed leak under load simulation",
         }
+        # Verifier identity is derived from the authenticated operator (M1.4-1).
         res = await client.post(
-            f"/api/v1/projects/{project.id}/memories/{mem.id}/verify", json=payload
+            f"/api/v1/projects/{project.id}/memories/{mem.id}/verify",
+            json=payload,
+            headers={"X-ASTRAVA-ACTOR-NAME": "Senior QA Engineer"},
         )
         assert res.status_code == 200
         data = res.json()

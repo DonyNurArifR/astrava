@@ -9,6 +9,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import OperatorContext, require_authorized_verifier
 from app.db.session import get_db
 from app.models.memory import (
     MemoryCategory,
@@ -377,12 +378,21 @@ async def verify_memory(
     project_id: uuid.UUID,
     memory_id: uuid.UUID,
     data: MemoryVerifyRequest,
+    operator: OperatorContext = Depends(require_authorized_verifier),
     db: AsyncSession = Depends(get_db),
 ) -> MemoryRead:
     """Mark a memory as verified with verifier attribution and evidence details.
 
+    The verifier identity is derived from the authenticated operator context; any
+    client-supplied ``verified_by`` must match it or the request is rejected.
     Upgrades AGENT_CONCLUSION provenance to VERIFIED_FINDING.
     """
+    if data.verified_by is not None and data.verified_by != operator.display_name:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot impersonate verifier; identity derived from authenticated operator context",
+        )
+
     await _verify_project_exists(db, project_id)
 
     try:
@@ -390,11 +400,11 @@ async def verify_memory(
             db=db,
             project_id=project_id,
             memory_id=memory_id,
-            verified_by=data.verified_by,
+            verified_by=operator.display_name,
             verification_details=data.verification_details,
-            actor_type="user",
-            actor_id="user",
-            reason=data.reason or f"Verified by {data.verified_by}",
+            actor_type=operator.actor_type,
+            actor_id=operator.actor_id,
+            reason=data.reason or f"Verified by {operator.display_name}",
         )
         await db.commit()
         await db.refresh(verified)
