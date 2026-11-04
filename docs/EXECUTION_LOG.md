@@ -605,5 +605,48 @@
   - Updated `docs/V1_4_TECHNICAL_RISKS.md` marking TR-03 RESOLVED.
   - Authored `docs/V1_4_M2_RELEASE_REPORT.md`.
 
+## 2026-11-04 — V1.4-M2.2: Budget Governance Hardening
+- **Role Alignment:** Lead AI Architect & Independent Reviewer: Gemini. Executor: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Systematic hardening of execution budget governance addressing findings F-01 through F-06 from M1.4-2.1 independent acceptance audit.
+- **Relational Schema & Migration (`d4e5f6a1b2c3`):**
+  - Updated `backend/app/models/budget.py`:
+    - Converted all monetary fields (`max_cost_usd`, `consumed_actual_cost_usd`, `consumed_estimated_cost_usd`, `reserved_cost_usd`, `reconciled_cost_usd`) from `Float` to `Numeric(12, 6)` using Python `Decimal`.
+    - Added `fence_token: Mapped[str] = mapped_column(String(64))` and `attempt_number: Mapped[int] = mapped_column(Integer, default=0)` on `BudgetReservation`.
+    - Created `BudgetAuditLog` model (`budget_audit_logs` table) with `execution_id`, `budget_id`, `action`, `actor_id`, `actor_type`, `reason`, `previous_limits`, `new_limits`, and composite indexes.
+  - Authored Alembic migration `backend/alembic/versions/d4e5f6a1b2c3_harden_budget_governance_and_audit.py` revising `9c4d2e1f8a7b`.
+  - Tested upgrade, downgrade, and re-upgrade cleanly against PostgreSQL 16 container (`astrava-postgres` on port 5433).
+- **Core BudgetGovernor Service Hardening (`backend/app/services/budget_governor.py`):**
+  - Converted internal calculations and comparisons to Python `Decimal` with helper `_to_decimal()`.
+  - Added system safety ceilings via `MAX_BUDGET_CEILINGS`.
+  - Generated cryptographically secure 64-char `fence_token` on reservation creation and validated matching token on `reconcile()` and `release()`, raising `FencingTokenMismatchError` on stale worker attempts.
+  - Added parameter `is_cost_zero_confirmed` to `reconcile()`: when provider cost is missing, `None`, or unconfirmed zero while consuming tokens, preserves reserved estimate as `consumed_estimated_cost_usd`.
+  - Implemented `increase_budget()` requiring `reason` ($\ge 5$ chars), enforcing ceiling caps, verifying budget/execution association, and persisting immutable `BudgetAuditLog` records.
+  - Added `get_reservation_by_key()` and `ReservationAlreadySettledError` for crash recovery.
+- **REST APIs & Security:**
+  - Protected `POST /api/v1/executions/{execution_id}/budget/increase` with `OperatorContext` and `require_authorized_verifier`.
+  - Rejects unauthenticated requests with HTTP 401; rejects invalid or short reasons with HTTP 422; rejects ceiling violations with HTTP 422; rejects non-existent executions with HTTP 404.
+  - Emits `pipeline_budget_increased` event into execution telemetry.
+- **Workflow Orchestration Hardening (`workflow_graph.py` & Provider Layer):**
+  - Updated `ProviderResponse` in `base.py` to allow `cost_usd: float | None = None` and added flags `cost_unavailable`, `tokens_unavailable`.
+  - Updated `ClaudeCodeProvider` to populate `cost_unavailable` and `tokens_unavailable` distinctly.
+  - In `workflow_graph.py`, updated `dispatch_task_node` to reserve `task:{task_id}:attempt:0` with `fence_token`. Resumed workflows cleanly adopt already-reconciled attempt 0 from crashed runs.
+  - Dynamically reserves capacity for each retry (`attempt > 0`) using `task:{task_id}:attempt:{attempt}`; cleanly halts retries mid-task upon budget exhaustion.
+  - Settles each attempt individually, incrementing `total_agent_attempts += 1` per actual provider attempt.
+- **Frontend Experience:**
+  - Updated `frontend/src/types/api.ts` to require `reason: string` in `BudgetLimitsUpdate`.
+  - Updated `IncreaseBudgetModal` in `BudgetIndicator.tsx` to include required justification reason input.
+- **Verification & Acceptance:**
+  - Authored `backend/tests/test_v1_4_budget_hardening.py` with 10 integration tests covering F-01 through F-06 (10/10 passed in 4.44s).
+  - Maintained `backend/tests/test_v1_4_budget_governance.py` (20/20 passed in 2.68s). Total budget test suite: 30/30 passed.
+  - Full backend pytest suite: **148/148 tests passed** in 23.57s.
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 95 backend files.
+  - Frontend Vitest suite: 9/9 test files (16 tests) passed in 1.36s; Vite build clean in 164ms.
+- **Documentation & Reporting:**
+  - Added Section 8.4 in `docs/ARCHITECTURE.md`.
+  - Added ADR-015 in `docs/DECISIONS.md`.
+  - Updated `docs/ROADMAP.md` and `docs/PROGRESS.md`.
+  - Authored `docs/V1_4_M2_2_RELEASE_REPORT.md`.
+
+
 
 

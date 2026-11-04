@@ -127,6 +127,7 @@ const IncreaseBudgetModal: React.FC<IncreaseBudgetModalProps> = ({
 }) => {
   const [costInput, setCostInput] = useState('');
   const [tokensInput, setTokensInput] = useState('');
+  const [reasonInput, setReasonInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -140,11 +141,18 @@ const IncreaseBudgetModal: React.FC<IncreaseBudgetModalProps> = ({
       return;
     }
 
-    const payload: BudgetLimitsUpdate = {};
+    if (!reasonInput.trim() || reasonInput.trim().length < 5) {
+      setFormError('Please enter an auditable reason of at least 5 characters for this increase.');
+      return;
+    }
+
+    const payload: BudgetLimitsUpdate = {
+      reason: reasonInput.trim(),
+    };
     if (cost.value !== undefined) payload.max_cost_usd = cost.value;
     if (tokens.value !== undefined) payload.max_total_tokens = tokens.value;
-    if (Object.keys(payload).length === 0) {
-      setFormError('Enter a new limit for at least one field.');
+    if (Object.keys(payload).length <= 1) {
+      setFormError('Enter a new limit for at least one field (cost or tokens).');
       return;
     }
 
@@ -230,6 +238,20 @@ const IncreaseBudgetModal: React.FC<IncreaseBudgetModalProps> = ({
             value={tokensInput}
             onChange={e => setTokensInput(e.target.value)}
             placeholder="unchanged"
+            className={inputClass}
+          />
+        </label>
+
+        <label className="block space-y-1 text-xs">
+          <span className="font-semibold text-slate-700 dark:text-slate-300">
+            Justification / Reason <span className="text-red-500">*</span>
+          </span>
+          <textarea
+            required
+            rows={2}
+            value={reasonInput}
+            onChange={e => setReasonInput(e.target.value)}
+            placeholder="e.g. Authorized additional wave for extensive test generation"
             className={inputClass}
           />
         </label>

@@ -33,7 +33,10 @@ class ProviderResponse(BaseModel):
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
-    cost_usd: float = 0.0
+    cost_usd: float | None = None
+    is_cost_estimated: bool = False
+    cost_unavailable: bool = False
+    tokens_unavailable: bool = False
     model: str | None = None
     canonical_model: str | None = None
     session_id: str | None = None

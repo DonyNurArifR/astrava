@@ -263,14 +263,14 @@ async def test_budget_initialization(db_session):
 
     budget = await _load_budget(execution_id)
     assert budget.status == BudgetStatus.ACTIVE
-    assert budget.max_cost_usd == pytest.approx(1.0)
+    assert float(budget.max_cost_usd) == pytest.approx(1.0)
     assert budget.max_input_tokens == 250_000
     assert budget.max_output_tokens == 50_000
     assert budget.max_remediation_turns == 5
     assert budget.max_replan_count == 2
     assert budget.max_runtime_seconds == 600
     assert budget.consumed_total_tokens == 0
-    assert budget.reserved_cost_usd == pytest.approx(0.0)
+    assert float(budget.reserved_cost_usd) == pytest.approx(0.0)
 
 
 @pytest.mark.asyncio
@@ -291,7 +291,7 @@ async def test_initial_execution_reservation(db_session):
     assert budget.active_reservations_count == 1
     assert budget.reserved_input_tokens == 4000
     assert budget.reserved_output_tokens == 2000
-    assert budget.reserved_cost_usd == pytest.approx(0.02)
+    assert float(budget.reserved_cost_usd) == pytest.approx(0.02)
     assert budget.consumed_total_tokens == 0
 
     reservations = await _load_reservations(execution_id)
@@ -322,17 +322,17 @@ async def test_successful_usage_reconciliation(db_session):
     assert budget.active_reservations_count == 0
     assert budget.reserved_input_tokens == 0
     assert budget.reserved_output_tokens == 0
-    assert budget.reserved_cost_usd == pytest.approx(0.0)
+    assert float(budget.reserved_cost_usd) == pytest.approx(0.0)
     # ...and actual usage charged.
     assert budget.consumed_input_tokens == 3000
     assert budget.consumed_output_tokens == 1500
-    assert budget.consumed_actual_cost_usd == pytest.approx(0.02)
+    assert float(budget.consumed_actual_cost_usd) == pytest.approx(0.02)
     assert budget.consumed_runtime_ms == 800
     assert budget.total_agent_attempts == 1
 
     [reservation] = await _load_reservations(execution_id)
     assert reservation.status == BudgetReservationStatus.RECONCILED
-    assert reservation.reconciled_cost_usd == pytest.approx(0.02)
+    assert float(reservation.reconciled_cost_usd) == pytest.approx(0.02)
 
 
 @pytest.mark.asyncio
@@ -345,11 +345,11 @@ async def test_unused_reservation_release(db_session):
 
     budget = await _load_budget(execution_id)
     assert budget.active_reservations_count == 0
-    assert budget.reserved_cost_usd == pytest.approx(0.0)
+    assert float(budget.reserved_cost_usd) == pytest.approx(0.0)
     assert budget.reserved_input_tokens == 0
     # Nothing was consumed: a released hold is not charged.
-    assert budget.consumed_actual_cost_usd == pytest.approx(0.0)
-    assert budget.consumed_estimated_cost_usd == pytest.approx(0.0)
+    assert float(budget.consumed_actual_cost_usd) == pytest.approx(0.0)
+    assert float(budget.consumed_estimated_cost_usd) == pytest.approx(0.0)
     assert budget.consumed_total_tokens == 0
     assert budget.total_agent_attempts == 0
 
@@ -409,7 +409,7 @@ async def test_concurrent_reservations_cannot_over_reserve(db_session):
 
     budget = await _load_budget(execution_id)
     assert budget.active_reservations_count == 3
-    assert budget.reserved_cost_usd == pytest.approx(0.03)
+    assert float(budget.reserved_cost_usd) == pytest.approx(0.03)
     assert len(await _load_reservations(execution_id)) == 3
 
 
@@ -445,8 +445,8 @@ async def test_actual_vs_estimated_cost_representation(db_session):
         actual_cost_usd=0.25,
     )
     budget_a = await _load_budget(exec_a)
-    assert budget_a.consumed_actual_cost_usd == pytest.approx(0.25)
-    assert budget_a.consumed_estimated_cost_usd == pytest.approx(0.0)
+    assert float(budget_a.consumed_actual_cost_usd) == pytest.approx(0.25)
+    assert float(budget_a.consumed_estimated_cost_usd) == pytest.approx(0.0)
     assert budget_a.is_cost_estimated is False
 
     # Provider-reported cost that is itself an estimate.
@@ -462,8 +462,8 @@ async def test_actual_vs_estimated_cost_representation(db_session):
         is_cost_estimated=True,
     )
     budget_b = await _load_budget(exec_b)
-    assert budget_b.consumed_actual_cost_usd == pytest.approx(0.0)
-    assert budget_b.consumed_estimated_cost_usd == pytest.approx(0.25)
+    assert float(budget_b.consumed_actual_cost_usd) == pytest.approx(0.0)
+    assert float(budget_b.consumed_estimated_cost_usd) == pytest.approx(0.25)
     assert budget_b.is_cost_estimated is True
 
 
@@ -483,12 +483,12 @@ async def test_unknown_provider_usage_representation(db_session):
     )
 
     budget = await _load_budget(execution_id)
-    assert budget.consumed_estimated_cost_usd == pytest.approx(0.04)
-    assert budget.consumed_actual_cost_usd == pytest.approx(0.0)
+    assert float(budget.consumed_estimated_cost_usd) == pytest.approx(0.04)
+    assert float(budget.consumed_actual_cost_usd) == pytest.approx(0.0)
     assert budget.is_cost_estimated is True
 
     [reservation] = await _load_reservations(execution_id)
-    assert reservation.reconciled_cost_usd == pytest.approx(0.04)
+    assert float(reservation.reconciled_cost_usd) == pytest.approx(0.04)
     assert reservation.status == BudgetReservationStatus.RECONCILED
 
 
@@ -632,7 +632,7 @@ async def test_resume_after_process_restart(db_session):
     )
     after = await _load_budget(execution_id)
     assert after.active_reservations_count == 0
-    assert after.consumed_actual_cost_usd == pytest.approx(0.03)
+    assert float(after.consumed_actual_cost_usd) == pytest.approx(0.03)
 
 
 @pytest.mark.asyncio
@@ -662,14 +662,14 @@ async def test_recovery_from_crash_after_reservation(db_session):
     assert by_id[crashed].status == BudgetReservationStatus.EXPIRED
     assert by_id[crashed].resolved_at is not None
     # Expired estimate is charged (a stalled worker cannot free budget by timing out).
-    assert budget.consumed_estimated_cost_usd == pytest.approx(0.01)
+    assert float(budget.consumed_estimated_cost_usd) == pytest.approx(0.01)
     assert budget.is_cost_estimated is True
 
     # No orphaned holds: only the new reservation remains ACTIVE, and counters agree.
     active = [r for r in reservations if r.status == BudgetReservationStatus.ACTIVE]
     assert len(active) == 1
     assert budget.active_reservations_count == 1
-    assert budget.reserved_cost_usd == pytest.approx(0.02)
+    assert float(budget.reserved_cost_usd) == pytest.approx(0.02)
 
     async with AsyncSessionLocal() as db:
         assert await BudgetGovernor.reclaim_expired_reservations(db, budget.id) == 0
@@ -703,8 +703,8 @@ async def test_parallel_workflow_waves_share_one_budget(tmp_path, monkeypatch, d
     assert budget.consumed_input_tokens == 300
     assert budget.consumed_output_tokens == 150
     assert budget.consumed_total_tokens == 450
-    assert budget.consumed_actual_cost_usd == pytest.approx(0.03)
-    assert budget.reserved_cost_usd == pytest.approx(0.0)
+    assert float(budget.consumed_actual_cost_usd) == pytest.approx(0.03)
+    assert float(budget.reserved_cost_usd) == pytest.approx(0.0)
     assert budget.active_reservations_count == 0
 
     reservations = await _load_reservations(execution_id)
@@ -798,7 +798,7 @@ async def test_existing_execution_compatibility(tmp_path, monkeypatch, db_sessio
     assert dispatched == ["legacy-1"]
     budget = await _load_budget(execution_id)
     assert budget.status == BudgetStatus.ACTIVE
-    assert budget.max_cost_usd == pytest.approx(1.0)
+    assert float(budget.max_cost_usd) == pytest.approx(1.0)
     assert budget.total_agent_attempts == 1
 
 
@@ -812,9 +812,11 @@ async def test_budget_increase_and_resumption(db_session):
     )
     assert (await _load_budget(execution_id)).status == BudgetStatus.EXHAUSTED
 
-    # Operator raises the ceiling.
+    # Operator raises the ceiling with mandatory reason.
     async with AsyncSessionLocal() as db:
-        budget = await BudgetGovernor.increase_budget(db, execution_id, {"max_cost_usd": 5.0})
+        budget = await BudgetGovernor.increase_budget(
+            db, execution_id, {"max_cost_usd": 5.0}, reason="Increase for resumption test"
+        )
         await db.commit()
         assert budget.status == BudgetStatus.ACTIVE
         assert budget.exhaustion_reason is None
@@ -823,6 +825,6 @@ async def test_budget_increase_and_resumption(db_session):
     resumed = await _reserve(execution_id, "resume:after", estimated_cost_usd=0.01)
     budget = await _load_budget(execution_id)
     assert budget.status == BudgetStatus.ACTIVE
-    assert budget.max_cost_usd == pytest.approx(5.0)
+    assert float(budget.max_cost_usd) == pytest.approx(5.0)
     assert budget.active_reservations_count == 1
     assert resumed is not None

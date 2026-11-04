@@ -111,4 +111,17 @@
   5. *Graceful Exhaustion & Resumption:* On limit exhaustion, transition to `EXHAUSTED`, record `exhaustion_reason`, preserve all completed work/artifacts, and halt new dispatches. Enable operators to resume executions by increasing limits via `POST /api/v1/executions/{id}/budget/increase`.
 - **Consequences:** Guaranteed protection against runaway autonomous loops; deterministic concurrency safety across parallel waves; zero resource leakage on worker crashes; audit-ready budget accounting.
 
+## ADR-015: Budget Governance Hardening & Resilient Resource Accounting (M1.4-2.2)
+- **Status:** Accepted
+- **Context:** The M1.4-2.1 independent acceptance audit identified six critical operational vulnerabilities in execution budget governance (F-01 through F-06): unauthenticated budget increase endpoint, retry attempts bypassing budget controls, missing provider metrics silently coerced to zero cost, lack of fencing tokens permitting stale workers to settle reservations, IEEE-754 binary floating-point drift violating check constraints, and crash resumption failures on already-reconciled reservations.
+- **Decision:**
+  1. *Authorized Budget Increases & Forensic Audit Logging (F-01):* Protect `POST /api/v1/executions/{execution_id}/budget/increase` with `OperatorContext` and `require_authorized_verifier`. Mandate justification `reason` ($\ge 5$ chars) and enforce system safety ceilings (`MAX_BUDGET_CEILINGS`). Atomically record every limit modification into `budget_audit_logs`.
+  2. *Retry-Aware Dynamic Reservation (F-02):* Reserve budget per-attempt using key format `task:{task_id}:attempt:{attempt}`. Authorize each retry attempt dynamically with `BudgetGovernor.reserve()`. Halt retries immediately mid-task upon budget exhaustion. Record `total_agent_attempts += 1` per actual provider attempt.
+  3. *Telemetry Metric Integrity (F-03):* When provider cost telemetry is missing or unavailable, preserve the reserved estimate as `consumed_estimated_cost_usd` rather than coercing to $0.00. Explicitly flag `cost_unavailable` and distinguish confirmed zero cost via `is_cost_zero_confirmed`.
+  4. *Distributed Fencing Tokens (F-04):* Assign a cryptographically secure 64-character `fence_token` to each `BudgetReservation`. Require the token on all `reconcile` and `release` operations, raising `FencingTokenMismatchError` to reject stale or zombie worker reconciliations.
+  5. *Fixed-Point Monetary Precision (F-05):* Migrate database schema from `Float` to `Numeric(12, 6)` and Python service layer to `Decimal`. Ensure zero arithmetic drift across high-frequency sub-cent cost increments.
+  6. *Idempotent Resumption Recovery (F-06):* Inspect settled reservation state during worker restart. If attempt 0 was already reconciled prior to an abrupt crash, cleanly adopt the completed task output without raising unhandled reservation errors.
+- **Consequences:** Eliminates unauthorized or unlogged budget inflation; guarantees bounded resource consumption across retries; ensures accurate financial accounting when provider metrics fluctuate; prevents distributed concurrency corruption from stale workers; provides crash-resilient execution resumption.
+
+
 

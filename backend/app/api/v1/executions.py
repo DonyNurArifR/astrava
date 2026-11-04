@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import OperatorContext, require_authorized_verifier
 from app.db.session import get_db
 from app.models.execution import ExecutionStatus
 from app.schemas.budget import BudgetLimitsUpdate, BudgetSummaryResponse
@@ -94,12 +95,43 @@ async def increase_execution_budget(
     execution_id: uuid.UUID,
     data: BudgetLimitsUpdate,
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> BudgetSummaryResponse:
+    execution = await WorkflowService.get_execution(db, execution_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
     if await BudgetGovernor.get_budget(db, execution_id) is None:
         raise HTTPException(status_code=404, detail="Budget not found for execution")
+
+    limits_dict = data.model_dump(exclude_unset=True, exclude={"reason"})
     try:
-        await BudgetGovernor.increase_budget(db, execution_id, data.model_dump(exclude_unset=True))
+        await BudgetGovernor.increase_budget(
+            db,
+            execution_id,
+            new_limits=limits_dict,
+            actor_id=operator.actor_id,
+            actor_type=operator.actor_type,
+            reason=data.reason,
+        )
+        await WorkflowService.record_event(
+            db,
+            execution_id,
+            "pipeline_budget_increased",
+            {
+                "actor_id": operator.actor_id,
+                "reason": data.reason,
+                "updated_limits": {
+                    k: float(v) if hasattr(v, "__float__") else v for k, v in limits_dict.items()
+                },
+            },
+        )
+        await db.commit()
     except BudgetGovernorError as exc:
+        await db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     summary = await BudgetGovernor.get_summary(db, execution_id)
     return BudgetSummaryResponse(**summary)

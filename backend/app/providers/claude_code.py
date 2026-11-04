@@ -183,7 +183,10 @@ class ClaudeCodeCLIProvider(BaseProvider):
             output_tokens = 0
             cache_read_tokens = 0
             cache_creation_tokens = 0
-            cost_usd = 0.0
+            cost_usd: float | None = None
+            is_cost_estimated = False
+            cost_unavailable = True
+            tokens_unavailable = True
             canonical_model = None
 
             if stdout.strip():
@@ -192,13 +195,28 @@ class ClaudeCodeCLIProvider(BaseProvider):
                     parsed_data = json.loads(stdout.strip())
                     output_text = parsed_data.get("result", "")
                     session_id = parsed_data.get("session_id")
-                    cost_usd = float(parsed_data.get("total_cost_usd", 0.0))
 
-                    usage = parsed_data.get("usage", {})
-                    input_tokens = int(usage.get("input_tokens", 0))
-                    output_tokens = int(usage.get("output_tokens", 0))
-                    cache_read_tokens = int(usage.get("cache_read_input_tokens", 0))
-                    cache_creation_tokens = int(usage.get("cache_creation_input_tokens", 0))
+                    if (
+                        "total_cost_usd" in parsed_data
+                        and parsed_data["total_cost_usd"] is not None
+                    ):
+                        cost_usd = float(parsed_data["total_cost_usd"])
+                        cost_unavailable = False
+                        # Claude Code CLI uses list price basis for cost calculation, which is an estimate
+                        is_cost_estimated = True
+                    else:
+                        cost_usd = None
+                        cost_unavailable = True
+
+                    usage = parsed_data.get("usage")
+                    if usage and isinstance(usage, dict):
+                        input_tokens = int(usage.get("input_tokens", 0))
+                        output_tokens = int(usage.get("output_tokens", 0))
+                        cache_read_tokens = int(usage.get("cache_read_input_tokens", 0))
+                        cache_creation_tokens = int(usage.get("cache_creation_input_tokens", 0))
+                        tokens_unavailable = False
+                    else:
+                        tokens_unavailable = True
 
                     # Extract canonical model attribution if available
                     model_usage = parsed_data.get("modelUsage", {})
@@ -232,6 +250,9 @@ class ClaudeCodeCLIProvider(BaseProvider):
                 cache_read_tokens=cache_read_tokens,
                 cache_creation_tokens=cache_creation_tokens,
                 cost_usd=cost_usd,
+                is_cost_estimated=is_cost_estimated,
+                cost_unavailable=cost_unavailable,
+                tokens_unavailable=tokens_unavailable,
                 session_id=session_id,
                 model=request.model,
                 canonical_model=canonical_model,

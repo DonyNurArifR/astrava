@@ -3,6 +3,7 @@ from app.models.agent import Agent
 from app.models.approval import Approval, ApprovalStatus
 from app.models.artifact import Artifact, ArtifactType, ArtifactVerificationStatus
 from app.models.budget import (
+    BudgetAuditLog,
     BudgetReservation,
     BudgetReservationStatus,
     BudgetStatus,
@@ -58,6 +59,7 @@ __all__ = [
     "ModelExecutionStatus",
     "ExecutionBudget",
     "BudgetReservation",
+    "BudgetAuditLog",
     "BudgetStatus",
     "BudgetReservationStatus",
 ]

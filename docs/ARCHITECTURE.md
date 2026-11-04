@@ -344,5 +344,36 @@ The `BudgetGovernor` independently tracks and bounds 6 distinct dimensions:
 - Pre-existing completed tasks, artifacts, and execution diagnostics are strictly preserved.
 - **Resumability:** An authorized operator can inspect the budget via `GET /api/v1/executions/{id}/budget` and raise limits via `POST /api/v1/executions/{id}/budget/increase`. Upon increasing limits, status returns to `ACTIVE`, and the execution can resume from its checkpoint without re-running completed work.
 
+### 8.4 Budget Governance Hardening (M1.4-2.2)
+In milestone M1.4-2.2, execution budget governance was systematically hardened against real-world distributed failure modes, concurrency races, precision drift, and audit vulnerabilities:
+
+- **8.4.1 Verifier Authorization & Immutable Audit Logging on Budget Increases (F-01):**
+  - Secured `POST /api/v1/executions/{execution_id}/budget/increase` with `OperatorContext` and `require_authorized_verifier`.
+  - Enforced mandatory justification `reason` (minimum 5 characters, trimmed) and hard system ceilings (`MAX_BUDGET_CEILINGS`: max $50.00 USD, 5M tokens, 50 attempts, 20 remediation turns, 10 replans, 7200s runtime).
+  - Every budget increase transactionally generates an immutable `BudgetAuditLog` row in PostgreSQL table `budget_audit_logs`, capturing `execution_id`, `budget_id`, `action`, `actor_id`, `actor_type`, `reason`, `previous_limits`, `new_limits`, and timestamp, while emitting a `pipeline_budget_increased` event into execution telemetry.
+
+- **8.4.2 Retry-Aware Dynamic Reservation & Provider Attempt Accounting (F-02):**
+  - Upgraded reservation tracking from static task-level granularity to per-attempt granularity: reservation keys follow `task:{task_id}:attempt:{attempt}` with `attempt_number`.
+  - Prior to executing each provider retry (`attempt > 0`), the workflow dynamically reserves capacity with the governor. If the budget is exhausted, retries halt immediately mid-task without unbudgeted provider calls.
+  - Granular accounting: `total_agent_attempts += 1` is recorded per actual provider attempt, ensuring retries never masquerade as a single attempt.
+
+- **8.4.3 Provider Telemetry Accuracy & Estimate Preservation (F-03):**
+  - Providers (e.g. `ClaudeCodeProvider`) now explicitly flag `cost_unavailable` and `tokens_unavailable` in `ProviderResponse`.
+  - When provider cost telemetry is missing or omitted, `BudgetGovernor.reconcile` strictly preserves the reserved estimate as `consumed_estimated_cost_usd` rather than silently coercing cost to $0.00.
+  - Genuine $0.00 cost is distinguished via explicit confirmation (`is_cost_zero_confirmed=True`).
+
+- **8.4.4 Distributed Fencing Tokens & Stale Worker Protection (F-04):**
+  - `BudgetReservation` persists a cryptographically secure 64-character `fence_token` generated upon reservation creation.
+  - All state transitions (`reconcile`, `release`) mandate the matching `fence_token`. Any stale, superseded, or zombie worker attempting to settle a reservation is rejected with `FencingTokenMismatchError`, protecting budget counters from double-spending or corrupted state.
+
+- **8.4.5 Fixed-Point Decimal Monetary Precision (F-05):**
+  - Migrated all monetary fields in PostgreSQL (`max_cost_usd`, `consumed_actual_cost_usd`, `consumed_estimated_cost_usd`, `reserved_cost_usd`, `reconciled_cost_usd`) from binary `Float` to `Numeric(12, 6)`.
+  - Service layer and models utilize Python `Decimal` across all arithmetic, eliminating IEEE-754 floating-point drift and check constraint rounding violations across high-volume sub-cent transactions.
+
+- **8.4.6 Crash-Resilient Worker Resumption & Idempotent Settle Recovery (F-06):**
+  - Resumed workflows after a mid-execution crash inspect settled reservation state via `BudgetGovernor.get_reservation_by_key()`.
+  - If a task attempt was already reconciled on a prior run that crashed before checkpointing, the resumed workflow cleanly adopts the completed task instead of re-dispatching or raising unhandled reservation errors.
+
+
 
 

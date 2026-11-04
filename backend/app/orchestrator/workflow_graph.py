@@ -4,6 +4,7 @@ import logging
 import re
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -13,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
+from app.models.budget import BudgetReservationStatus
 from app.models.execution import WorkflowExecution
 from app.models.memory import IngestionOperation, IngestionOperationStatus, ProjectMemory
 from app.models.project import StudioType
@@ -29,6 +31,7 @@ from app.services.agent_service import DEFAULT_AGENTS
 from app.services.budget_governor import (
     BudgetExhaustedError,
     BudgetGovernor,
+    FencingTokenMismatchError,
     ReservationNotFoundError,
 )
 from app.services.memory_service import MemoryService
@@ -268,60 +271,88 @@ def _reservation_timeout_seconds(task: dict[str, Any], state: OrchestrationState
 async def _settle_reservation(
     reservation_id: uuid.UUID,
     usage_records: list[dict[str, Any]] | None,
+    fence_token: str | None = None,
 ) -> None:
     """Reconcile a reservation with actual usage, or release it when usage is None (aborted)."""
     try:
         async with AsyncSessionLocal() as session:
             if usage_records is None:
-                await BudgetGovernor.release(session, reservation_id)
+                await BudgetGovernor.release(session, reservation_id, fence_token=fence_token)
             else:
+                total_in = sum(int(r.get("input_tokens") or 0) for r in usage_records)
+                total_out = sum(int(r.get("output_tokens") or 0) for r in usage_records)
+                total_dur = sum(int(r.get("duration_ms") or 0) for r in usage_records)
+                costs = [r.get("cost_usd") for r in usage_records if r.get("cost_usd") is not None]
+                actual_cost = Decimal(str(sum(costs))) if costs else None
                 await BudgetGovernor.reconcile(
                     session,
                     reservation_id,
-                    actual_input_tokens=sum(int(r.get("input_tokens") or 0) for r in usage_records),
-                    actual_output_tokens=sum(
-                        int(r.get("output_tokens") or 0) for r in usage_records
-                    ),
-                    duration_ms=sum(int(r.get("duration_ms") or 0) for r in usage_records),
-                    actual_cost_usd=sum(float(r.get("cost_usd") or 0.0) for r in usage_records),
+                    actual_input_tokens=total_in,
+                    actual_output_tokens=total_out,
+                    duration_ms=total_dur,
+                    actual_cost_usd=actual_cost,
+                    fence_token=fence_token,
                 )
             await session.commit()
-    except ReservationNotFoundError:
-        # Reclaimed as expired or already settled; the work is not re-charged.
-        logger.warning("Budget reservation %s already settled or expired", reservation_id)
+    except (ReservationNotFoundError, FencingTokenMismatchError) as err:
+        logger.warning("Budget reservation %s settlement note: %s", reservation_id, err)
 
 
 async def _execute_single_task(
     task: dict[str, Any],
     state: OrchestrationState,
     project_work_dir: Path,
-    reservation_id: uuid.UUID | None = None,
+    reservation_info: tuple[uuid.UUID, str] | uuid.UUID | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Run a task, then settle its budget reservation (reconcile on finish, release on abort)."""
-    if reservation_id is None:
-        return await _run_single_task(task, state, project_work_dir)
-    try:
-        updated_task, usage_records = await _run_single_task(task, state, project_work_dir)
-    except BaseException:
+    """Run a task with per-attempt budget reservations and safe fencing."""
+    import inspect
+
+    res_id = reservation_info[0] if isinstance(reservation_info, tuple) else reservation_info
+    fence = reservation_info[1] if isinstance(reservation_info, tuple) else None
+
+    sig = inspect.signature(_run_single_task)
+    if len(sig.parameters) <= 3:
         try:
-            await _settle_reservation(reservation_id, None)
-        except Exception:
-            logger.exception("Failed to release budget reservation %s", reservation_id)
-        raise
-    await _settle_reservation(reservation_id, usage_records)
-    return updated_task, usage_records
+            updated_task, usage_records = await _run_single_task(task, state, project_work_dir)
+        except BaseException:
+            if res_id:
+                try:
+                    await _settle_reservation(res_id, None, fence_token=fence)
+                except Exception:
+                    pass
+            raise
+        if res_id:
+            await _settle_reservation(res_id, usage_records, fence_token=fence)
+        return updated_task, usage_records
+
+    return await _run_single_task(task, state, project_work_dir, reservation_info)
 
 
 async def _run_single_task(
     task: dict[str, Any],
     state: OrchestrationState,
     project_work_dir: Path,
+    reservation_info: tuple[uuid.UUID, str] | uuid.UUID | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """
     Executes a single task using its assigned agent instructions,
     structured upstream context from completed dependencies, bounded retries,
-    and output schema validation.
+    per-attempt budget reservation/reconciliation, and output schema validation.
     """
+    init_res_id: uuid.UUID | None = None
+    init_fence_token: str | None = None
+    if isinstance(reservation_info, tuple):
+        init_res_id, init_fence_token = reservation_info
+    elif isinstance(reservation_info, uuid.UUID):
+        init_res_id = reservation_info
+
+    execution_uuid: uuid.UUID | None = None
+    if state.get("execution_id"):
+        try:
+            execution_uuid = uuid.UUID(state["execution_id"])
+        except (ValueError, TypeError):
+            pass
+
     agent_slug = task.get("assigned_agent_slug", "developer")
     snapshots = state.get("agent_snapshots", {})
     agent_info = snapshots.get(agent_slug) or AGENT_MAP.get(agent_slug, {})
@@ -380,24 +411,40 @@ async def _run_single_task(
         task["exit_code"] = 0 if report.overall_passed else 1
         task["retry_count"] = 0
 
-        usage_records.append(
-            {
-                "task_id": task["task_id"],
-                "provider": "deterministic",
-                "model": "deterministic-engine",
-                "duration_ms": report.total_duration_ms,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "cache_read_tokens": 0,
-                "cache_creation_tokens": 0,
-                "cost_usd": 0.0,
-                "status": "success" if report.overall_passed else "failed",
-                "exit_code": task["exit_code"],
-            }
-        )
+        u_rec = {
+            "task_id": task["task_id"],
+            "provider": "deterministic",
+            "model": "deterministic-engine",
+            "duration_ms": report.total_duration_ms,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cost_usd": 0.0,
+            "status": "success" if report.overall_passed else "failed",
+            "exit_code": task["exit_code"],
+        }
+        usage_records.append(u_rec)
+        if init_res_id is not None:
+            try:
+                async with AsyncSessionLocal() as session:
+                    await BudgetGovernor.reconcile(
+                        session,
+                        init_res_id,
+                        actual_input_tokens=0,
+                        actual_output_tokens=0,
+                        duration_ms=report.total_duration_ms,
+                        actual_cost_usd=Decimal("0.0"),
+                        is_cost_estimated=False,
+                        is_cost_zero_confirmed=True,
+                        fence_token=init_fence_token,
+                    )
+                    await session.commit()
+            except (ReservationNotFoundError, FencingTokenMismatchError) as err:
+                logger.warning("Deterministic reservation %s settlement note: %s", init_res_id, err)
         return task, usage_records
 
-    # 3. Claude Code CLI execution with bounded retries
+    # 3. Claude Code CLI execution with bounded retries and per-attempt budget governance
     retrieval_context = state.get("retrieval_context", "")
     if retrieval_context and not retrieval_context.startswith("_No"):
         project_context_section = f"Project Knowledge & Architecture Decisions (Persistent Memory):\n{retrieval_context}\n\n"
@@ -412,8 +459,8 @@ Agent Responsibilities & Directives:
 {project_context_section}Upstream Prerequisite Deliverables (Verified Context):
 {upstream_text}
 
-Your Assigned Task: {task["title"]}
-Task Description: {task["description"]}
+Your Assigned Task: {task.get("title", "")}
+Task Description: {task.get("description", "")}
 Acceptance Criteria: {task.get("acceptance_criteria", [])}
 Expected Deliverables: {task.get("expected_output_artifacts", [])}
 
@@ -431,7 +478,52 @@ Produce the complete deliverable meeting all criteria directly."""
     last_error = "Task execution failed"
 
     for attempt in range(max_retries + 1):
-        resp = await provider.execute(p_req)
+        if attempt == 0:
+            current_res_id = init_res_id
+            current_fence = init_fence_token
+        else:
+            # RETRY: Reserve attempt capacity BEFORE launching subprocess!
+            current_res_id = None
+            current_fence = None
+            if execution_uuid is not None:
+                try:
+                    async with AsyncSessionLocal() as session:
+                        retry_res = await BudgetGovernor.reserve(
+                            session,
+                            execution_uuid,
+                            reservation_key=f"task:{task['task_id']}:attempt:{attempt}",
+                            task_id=task["task_id"],
+                            agent_slug=agent_slug,
+                            purpose="agent_retry",
+                            attempt_number=attempt,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        await session.commit()
+                        current_res_id = retry_res.id
+                        current_fence = retry_res.fence_token
+                except BudgetExhaustedError as exc:
+                    logger.warning(
+                        "Task %s retry %d refused by budget governor: %s",
+                        task["task_id"],
+                        attempt,
+                        exc,
+                    )
+                    last_error = f"Retry blocked by budget exhaustion: {exc}"
+                    break
+
+        try:
+            resp = await provider.execute(p_req)
+        except BaseException:
+            if current_res_id is not None:
+                try:
+                    async with AsyncSessionLocal() as session:
+                        await BudgetGovernor.release(
+                            session, current_res_id, fence_token=current_fence
+                        )
+                        await session.commit()
+                except Exception:
+                    logger.exception("Failed to release reservation %s on abort", current_res_id)
+            raise
 
         u_rec = {
             "task_id": task["task_id"],
@@ -447,6 +539,34 @@ Produce the complete deliverable meeting all criteria directly."""
             "exit_code": resp.exit_code,
         }
         usage_records.append(u_rec)
+
+        # Settle this attempt immediately with BudgetGovernor
+        if current_res_id is not None:
+            actual_cost = (
+                Decimal(str(resp.cost_usd))
+                if (resp.cost_usd is not None and not resp.cost_unavailable)
+                else None
+            )
+            try:
+                async with AsyncSessionLocal() as session:
+                    await BudgetGovernor.reconcile(
+                        session,
+                        current_res_id,
+                        actual_input_tokens=resp.input_tokens,
+                        actual_output_tokens=resp.output_tokens,
+                        duration_ms=resp.duration_ms,
+                        actual_cost_usd=actual_cost,
+                        is_cost_estimated=resp.is_cost_estimated or actual_cost is None,
+                        fence_token=current_fence,
+                    )
+                    await session.commit()
+            except (ReservationNotFoundError, FencingTokenMismatchError) as settle_err:
+                logger.warning(
+                    "Attempt %d reservation %s settlement note: %s",
+                    attempt,
+                    current_res_id,
+                    settle_err,
+                )
 
         task["output_text"] = resp.output_text
         task["exit_code"] = resp.exit_code
@@ -522,23 +642,35 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
     # Reserve budget for the whole wave atomically: any refusal rolls back every
     # reservation in this wave and nothing is dispatched.
     execution_id = uuid.UUID(state["execution_id"])
-    reservations: dict[str, uuid.UUID] = {}
+    reservations: dict[str, tuple[uuid.UUID, str]] = {}
+    tasks_to_dispatch: list[dict[str, Any]] = []
+
     try:
         async with AsyncSessionLocal() as session:
-            await BudgetGovernor.initialize_budget(
+            budget = await BudgetGovernor.initialize_budget(
                 session, execution_id, uuid.UUID(state["project_id"])
             )
             for t in ready_tasks:
+                res_key = f"task:{t['task_id']}:attempt:0"
+                # Crash recovery idempotency: check if attempt 0 already reconciled
+                existing = await BudgetGovernor.get_reservation_by_key(session, budget.id, res_key)
+                if existing is not None and existing.status == BudgetReservationStatus.RECONCILED:
+                    logger.info("Task %s attempt 0 already reconciled in prior run", t["task_id"])
+                    t["status"] = "completed"
+                    continue
+
                 reservation = await BudgetGovernor.reserve(
                     session,
                     execution_id,
-                    reservation_key=f"task:{t['task_id']}",
+                    reservation_key=res_key,
                     task_id=t["task_id"],
                     agent_slug=t.get("assigned_agent_slug"),
                     purpose="agent_dispatch",
+                    attempt_number=0,
                     timeout_seconds=_reservation_timeout_seconds(t, state),
                 )
-                reservations[t["task_id"]] = reservation.id
+                reservations[t["task_id"]] = (reservation.id, reservation.fence_token)
+                tasks_to_dispatch.append(t)
             await session.commit()
     except BudgetExhaustedError as exc:
         message = f"Budget exhausted: {exc}"
@@ -554,7 +686,7 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
     results = await asyncio.gather(
         *[
             _execute_single_task(t, state, project_work_dir, reservations.get(t["task_id"]))
-            for t in ready_tasks
+            for t in tasks_to_dispatch
         ],
         return_exceptions=True,
     )

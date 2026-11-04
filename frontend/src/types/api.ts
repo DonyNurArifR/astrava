@@ -350,8 +350,10 @@ export interface BudgetSummary {
   utilization: Record<string, number | null>;
 }
 
-/** Partial update. Omitted keys keep their value; explicit null clears a limit. */
-export type BudgetLimitsUpdate = Partial<BudgetLimits>;
+/** Partial update with mandatory reason for auditability. */
+export interface BudgetLimitsUpdate extends Partial<BudgetLimits> {
+  reason: string;
+}
 
 export interface PaginatedResponse<T> {
   items: T[];

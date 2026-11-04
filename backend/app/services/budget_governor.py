@@ -11,6 +11,18 @@ serialized at the database. Reservations are recorded as ``BudgetReservation``
 rows and the budget's ``reserved_*`` counters are updated in the same
 transaction, so limit checks always see in-flight work.
 
+Worker ownership & Fencing
+--------------------------
+Every reservation is issued a unique ``fence_token`` upon creation. When settling
+(reconciling or releasing), the worker must provide its ``fence_token``. Stale
+workers whose holds expired or were reclaimed are fenced out and rejected.
+
+Monetary Precision
+------------------
+Monetary amounts are stored as PostgreSQL ``NUMERIC(12, 6)`` and manipulated as
+Python ``Decimal``. Sub-cent rounding errors and IEEE-754 binary underflows are
+eliminated.
+
 Transactions
 ------------
 Methods ``flush`` but never ``commit``; the caller owns the transaction and the
@@ -21,6 +33,7 @@ import logging
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import func, select
@@ -28,6 +41,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.budget import (
+    BudgetAuditLog,
     BudgetReservation,
     BudgetReservationStatus,
     BudgetStatus,
@@ -42,12 +56,25 @@ EXHAUSTION_THRESHOLD = 1.0
 # Defaults from docs/V1_4_TARGET_ARCHITECTURE.md (section 3.6). Dimensions not listed
 # here are unlimited (NULL) unless the caller passes an explicit limit.
 DEFAULT_LIMITS: dict[str, Any] = {
-    "max_cost_usd": 1.0,
+    "max_cost_usd": Decimal("1.000000"),
     "max_input_tokens": 250_000,
     "max_output_tokens": 50_000,
     "max_remediation_turns": 5,
     "max_replan_count": 2,
     "max_runtime_seconds": 600,
+}
+
+# Configurable maximum ceilings for operator budget increases (F-01)
+MAX_BUDGET_CEILINGS: dict[str, Any] = {
+    "max_cost_usd": Decimal("50.000000"),
+    "max_input_tokens": 5_000_000,
+    "max_output_tokens": 1_000_000,
+    "max_total_tokens": 6_000_000,
+    "max_agent_attempts": 100,
+    "max_task_attempts": 20,
+    "max_remediation_turns": 20,
+    "max_replan_count": 10,
+    "max_runtime_seconds": 7200,
 }
 
 LIMIT_FIELDS: frozenset[str] = frozenset(
@@ -96,23 +123,64 @@ class ReservationNotFoundError(BudgetGovernorError):
     """No ACTIVE reservation exists with the given id."""
 
 
+class FencingTokenMismatchError(BudgetGovernorError):
+    """A stale worker presented an invalid or mismatched fencing token."""
+
+
+class ReservationAlreadySettledError(BudgetGovernorError):
+    """The requested reservation was already settled (reconciled or released)."""
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers. These assume the caller already holds the budget row lock
 # where noted, or take it themselves.
 # ---------------------------------------------------------------------------
 
 
-def _validate_limits(limits: Mapping[str, Any]) -> dict[str, Any]:
+def _to_decimal(val: Decimal | float | int | str | None) -> Decimal | None:
+    if val is None:
+        return None
+    if isinstance(val, Decimal):
+        return val
+    try:
+        return Decimal(str(val))
+    except (InvalidOperation, TypeError, ValueError) as err:
+        raise ValueError(f"Invalid monetary value {val!r}: {err}") from err
+
+
+def _validate_limits(limits: Mapping[str, Any], enforce_ceilings: bool = False) -> dict[str, Any]:
     unknown = set(limits) - LIMIT_FIELDS
     if unknown:
         raise ValueError(f"Unknown budget limit(s): {sorted(unknown)}")
+    validated: dict[str, Any] = {}
     for key, value in limits.items():
-        if value is not None and value < 0:
-            raise ValueError(f"Budget limit {key} must be >= 0 or None")
-    return dict(limits)
+        if value is None:
+            validated[key] = None
+            continue
+        if key == "max_cost_usd":
+            dec_val = _to_decimal(value)
+            assert dec_val is not None
+            if dec_val < Decimal("0.0"):
+                raise ValueError("Budget limit max_cost_usd must be >= 0 or None")
+            if enforce_ceilings and dec_val > MAX_BUDGET_CEILINGS["max_cost_usd"]:
+                raise ValueError(
+                    f"max_cost_usd {dec_val} exceeds maximum permitted ceiling of {MAX_BUDGET_CEILINGS['max_cost_usd']}"
+                )
+            validated[key] = dec_val
+        else:
+            if value < 0:
+                raise ValueError(f"Budget limit {key} must be >= 0 or None")
+            if enforce_ceilings and key in MAX_BUDGET_CEILINGS:
+                max_val = MAX_BUDGET_CEILINGS[key]
+                if value > max_val:
+                    raise ValueError(
+                        f"{key} {value} exceeds maximum permitted ceiling of {max_val}"
+                    )
+            validated[key] = value
+    return validated
 
 
-def _validate_non_negative(**values: float | int | None) -> None:
+def _validate_non_negative(**values: Decimal | float | int | None) -> None:
     for name, value in values.items():
         if value is not None and value < 0:
             raise ValueError(f"{name} must be >= 0")
@@ -144,7 +212,7 @@ async def _require_locked_budget(db: AsyncSession, execution_id: uuid.UUID) -> E
 
 
 async def _lock_active_reservation(
-    db: AsyncSession, reservation_id: uuid.UUID
+    db: AsyncSession, reservation_id: uuid.UUID, fence_token: str | None = None
 ) -> tuple[ExecutionBudget, BudgetReservation]:
     """Lock the parent budget, then the ACTIVE reservation. Lock order: budget -> reservation."""
     reservation = await db.get(BudgetReservation, reservation_id)
@@ -165,7 +233,13 @@ async def _lock_active_reservation(
         )
     ).scalar_one_or_none()
     if locked is None:
-        raise ReservationNotFoundError(f"Reservation {reservation_id} is not ACTIVE")
+        raise ReservationNotFoundError(
+            f"Reservation {reservation_id} is not ACTIVE (current status: {reservation.status})"
+        )
+    if fence_token is not None and locked.fence_token != fence_token:
+        raise FencingTokenMismatchError(
+            f"Fencing token mismatch for reservation {reservation_id}: stale worker rejected"
+        )
     return budget, locked
 
 
@@ -177,12 +251,12 @@ def _release_reserved(budget: ExecutionBudget, reservation: BudgetReservation) -
         0, budget.reserved_output_tokens - reservation.reserved_output_tokens
     )
     budget.reserved_cost_usd = max(
-        0.0, round(budget.reserved_cost_usd - reservation.reserved_cost_usd, 6)
+        Decimal("0.0"), budget.reserved_cost_usd - reservation.reserved_cost_usd
     )
     budget.active_reservations_count = max(0, budget.active_reservations_count - 1)
 
 
-def _consumed_dimensions(budget: ExecutionBudget) -> dict[str, tuple[float | None, float]]:
+def _consumed_dimensions(budget: ExecutionBudget) -> dict[str, tuple[Any, Any]]:
     """(limit, consumed) per dimension. Replan count is enforced in record_replan instead."""
     return {
         "cost_usd": (
@@ -208,9 +282,11 @@ def _apply_thresholds(budget: ExecutionBudget) -> None:
     for dimension, (limit, consumed) in _consumed_dimensions(budget).items():
         if limit is None:
             continue
-        if consumed >= limit * EXHAUSTION_THRESHOLD:
+        lim_float = float(limit)
+        cons_float = float(consumed)
+        if cons_float >= lim_float * EXHAUSTION_THRESHOLD:
             exhausted.append(dimension)
-        elif consumed >= limit * WARNING_THRESHOLD:
+        elif cons_float >= lim_float * WARNING_THRESHOLD:
             warning.append(dimension)
 
     if exhausted:
@@ -281,7 +357,7 @@ async def _reclaim_expired(db: AsyncSession, budget: ExecutionBudget, now: datet
 def _first_projected_violation(
     budget: ExecutionBudget,
     *,
-    cost_usd: float,
+    cost_usd: Decimal,
     input_tokens: int,
     output_tokens: int,
     timeout_seconds: int,
@@ -295,8 +371,9 @@ def _first_projected_violation(
     )
     committed_input = budget.consumed_input_tokens + budget.reserved_input_tokens
     committed_output = budget.consumed_output_tokens + budget.reserved_output_tokens
-    committed_total = budget.consumed_total_tokens + budget.reserved_input_tokens
-    committed_total += budget.reserved_output_tokens
+    committed_total = (
+        budget.consumed_total_tokens + budget.reserved_input_tokens + budget.reserved_output_tokens
+    )
 
     if budget.max_cost_usd is not None and committed_cost + cost_usd > budget.max_cost_usd:
         return "cost_usd"
@@ -381,6 +458,19 @@ class BudgetGovernor:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_reservation_by_key(
+        db: AsyncSession, budget_id: uuid.UUID, reservation_key: str
+    ) -> BudgetReservation | None:
+        """Query a reservation by key on a budget."""
+        result = await db.execute(
+            select(BudgetReservation).where(
+                BudgetReservation.budget_id == budget_id,
+                BudgetReservation.reservation_key == reservation_key,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def reclaim_expired_reservations(db: AsyncSession, budget_id: uuid.UUID) -> int:
         """Expire overdue ACTIVE reservations on a budget. Returns how many were reclaimed."""
         budget = await _lock_budget(db, budget_id=budget_id)
@@ -396,24 +486,28 @@ class BudgetGovernor:
         task_id: str | None = None,
         agent_slug: str | None = None,
         purpose: str = "agent_dispatch",
+        attempt_number: int = 0,
         estimated_input_tokens: int = 4000,
         estimated_output_tokens: int = 2000,
-        estimated_cost_usd: float = 0.01,
+        estimated_cost_usd: Decimal | float = Decimal("0.010000"),
         timeout_seconds: int = 120,
     ) -> BudgetReservation:
         """Hold budget for one unit of work before dispatch.
 
+        Issues a unique ``fence_token`` protecting this reservation lease.
         Idempotent per ``reservation_key``: retrying with the same key returns the
         existing ACTIVE reservation without reserving twice.
 
         Raises:
             BudgetExhaustedError: budget is EXHAUSTED/COMPLETED/CANCELLED.
             BudgetLimitExceededError: this reservation would exceed a limit.
+            ReservationAlreadySettledError: reservation was already settled.
         """
+        cost_decimal = _to_decimal(estimated_cost_usd) or Decimal("0.010000")
         _validate_non_negative(
             estimated_input_tokens=estimated_input_tokens,
             estimated_output_tokens=estimated_output_tokens,
-            estimated_cost_usd=estimated_cost_usd,
+            estimated_cost_usd=cost_decimal,
         )
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be > 0")
@@ -433,6 +527,10 @@ class BudgetGovernor:
         if existing is not None:
             if existing.status == BudgetReservationStatus.ACTIVE:
                 return existing
+            if existing.status == BudgetReservationStatus.RECONCILED:
+                raise ReservationAlreadySettledError(
+                    f"reservation_key {reservation_key!r} already reconciled (attempt already completed)"
+                )
             raise BudgetGovernorError(
                 f"reservation_key {reservation_key!r} already used (status={existing.status})"
             )
@@ -453,7 +551,7 @@ class BudgetGovernor:
 
         violation = _first_projected_violation(
             budget,
-            cost_usd=estimated_cost_usd,
+            cost_usd=cost_decimal,
             input_tokens=estimated_input_tokens,
             output_tokens=estimated_output_tokens,
             timeout_seconds=timeout_seconds,
@@ -464,6 +562,7 @@ class BudgetGovernor:
                 f"Reservation {reservation_key!r} would exceed {violation} limit"
             )
 
+        fence_token = uuid.uuid4().hex
         reservation = BudgetReservation(
             budget_id=budget.id,
             execution_id=execution_id,
@@ -473,14 +572,16 @@ class BudgetGovernor:
             task_id=task_id,
             reserved_input_tokens=estimated_input_tokens,
             reserved_output_tokens=estimated_output_tokens,
-            reserved_cost_usd=estimated_cost_usd,
+            reserved_cost_usd=cost_decimal,
+            fence_token=fence_token,
+            attempt_number=attempt_number,
             status=BudgetReservationStatus.ACTIVE,
             expires_at=now + timedelta(seconds=timeout_seconds),
             metadata_json={"timeout_seconds": timeout_seconds},
         )
         budget.reserved_input_tokens += estimated_input_tokens
         budget.reserved_output_tokens += estimated_output_tokens
-        budget.reserved_cost_usd += estimated_cost_usd
+        budget.reserved_cost_usd += cost_decimal
         budget.active_reservations_count += 1
         db.add(reservation)
         await db.flush()
@@ -494,30 +595,50 @@ class BudgetGovernor:
         actual_input_tokens: int,
         actual_output_tokens: int,
         duration_ms: int,
-        actual_cost_usd: float | None = None,
+        actual_cost_usd: Decimal | float | None = None,
         is_cost_estimated: bool = False,
+        is_cost_zero_confirmed: bool = False,
         is_remediation: bool = False,
+        fence_token: str | None = None,
     ) -> ExecutionBudget:
         """Settle an ACTIVE reservation with actual usage, releasing its hold.
 
-        If ``actual_cost_usd`` is None the reserved estimate is charged and recorded
-        as estimated cost. ``is_cost_estimated`` marks a provider-reported cost that
-        is itself an estimate.
+        If ``actual_cost_usd`` is None (or 0.0 with non-zero tokens without confirmation),
+        the reserved estimate is charged and marked estimated. Missing metrics never
+        coerce to $0.00 actual cost (F-03).
+        Validates ``fence_token`` to reject stale workers (F-04).
 
         Raises:
             ReservationNotFoundError: no ACTIVE reservation with this id.
+            FencingTokenMismatchError: fence_token does not match active lease.
         """
+        cost_decimal = _to_decimal(actual_cost_usd) if actual_cost_usd is not None else None
         _validate_non_negative(
             actual_input_tokens=actual_input_tokens,
             actual_output_tokens=actual_output_tokens,
             duration_ms=duration_ms,
-            actual_cost_usd=actual_cost_usd,
+            actual_cost_usd=cost_decimal,
         )
-        budget, reservation = await _lock_active_reservation(db, reservation_id)
+        budget, reservation = await _lock_active_reservation(
+            db, reservation_id, fence_token=fence_token
+        )
         now = datetime.now(UTC)
 
-        cost = reservation.reserved_cost_usd if actual_cost_usd is None else actual_cost_usd
-        cost_is_estimated = is_cost_estimated or actual_cost_usd is None
+        if cost_decimal is None:
+            # Telemetry did not supply provider cost: charge the reserved estimate as estimated cost.
+            cost = reservation.reserved_cost_usd
+            cost_is_estimated = True
+        elif (
+            cost_decimal == Decimal("0.0")
+            and (actual_input_tokens > 0 or actual_output_tokens > 0)
+            and not is_cost_zero_confirmed
+        ):
+            # Coerced zero cost on token-consuming call: preserve estimated cost.
+            cost = reservation.reserved_cost_usd
+            cost_is_estimated = True
+        else:
+            cost = cost_decimal
+            cost_is_estimated = is_cost_estimated
 
         _release_reserved(budget, reservation)
         budget.consumed_input_tokens += actual_input_tokens
@@ -542,9 +663,13 @@ class BudgetGovernor:
         return budget
 
     @staticmethod
-    async def release(db: AsyncSession, reservation_id: uuid.UUID) -> None:
+    async def release(
+        db: AsyncSession, reservation_id: uuid.UUID, fence_token: str | None = None
+    ) -> None:
         """Drop an ACTIVE reservation without consuming anything (work was never run)."""
-        budget, reservation = await _lock_active_reservation(db, reservation_id)
+        budget, reservation = await _lock_active_reservation(
+            db, reservation_id, fence_token=fence_token
+        )
         _release_reserved(budget, reservation)
         reservation.status = BudgetReservationStatus.RELEASED
         reservation.resolved_at = datetime.now(UTC)
@@ -574,21 +699,50 @@ class BudgetGovernor:
         db: AsyncSession,
         execution_id: uuid.UUID,
         new_limits: Mapping[str, Any] | None = None,
+        actor_id: str = "operator",
+        actor_type: str = "operator",
+        reason: str = "Operator manual limit increase",
     ) -> ExecutionBudget:
-        """Raise or clear limits (operator action) and re-evaluate status.
+        """Raise or clear limits (operator action), record immutable audit log, and re-evaluate status.
 
-        An EXHAUSTED or WARNING budget returns to ACTIVE, then thresholds are
-        re-applied, so it stays EXHAUSTED if the new limits are still exceeded.
+        Requires mandatory non-empty reason and enforces ceiling boundaries (F-01).
 
         Raises:
             BudgetGovernorError: budget is COMPLETED or CANCELLED.
+            ValueError: reason too short or requested limit exceeds maximum ceiling.
         """
         budget = await _require_locked_budget(db, execution_id)
         if budget.status in _TERMINAL_STATUSES:
             raise BudgetGovernorError(f"Cannot change limits of a {budget.status} budget")
 
-        for key, value in _validate_limits(new_limits or {}).items():
+        if not reason or len(reason.strip()) < 5:
+            raise ValueError(
+                "A non-empty reason of at least 5 characters is required for budget increase"
+            )
+
+        validated = _validate_limits(new_limits or {}, enforce_ceilings=True)
+        previous_limits = {field: getattr(budget, field) for field in sorted(LIMIT_FIELDS)}
+
+        for key, value in validated.items():
             setattr(budget, key, value)
+
+        applied_limits = {field: getattr(budget, field) for field in sorted(LIMIT_FIELDS)}
+
+        audit_entry = BudgetAuditLog(
+            budget_id=budget.id,
+            execution_id=budget.execution_id,
+            action="budget_increase",
+            actor_id=actor_id,
+            actor_type=actor_type,
+            reason=reason.strip(),
+            previous_limits={
+                k: float(v) if isinstance(v, Decimal) else v for k, v in previous_limits.items()
+            },
+            new_limits={
+                k: float(v) if isinstance(v, Decimal) else v for k, v in applied_limits.items()
+            },
+        )
+        db.add(audit_entry)
 
         if budget.status in (BudgetStatus.EXHAUSTED, BudgetStatus.WARNING):
             budget.status = BudgetStatus.ACTIVE
@@ -617,8 +771,10 @@ class BudgetGovernor:
                 utilization[dimension] = None
                 remaining[dimension] = None
             else:
-                utilization[dimension] = consumed / limit if limit > 0 else 1.0
-                remaining[dimension] = max(limit - consumed, 0)
+                lim_float = float(limit)
+                cons_float = float(consumed)
+                utilization[dimension] = cons_float / lim_float if lim_float > 0 else 1.0
+                remaining[dimension] = max(lim_float - cons_float, 0.0)
 
         return {
             "budget_id": str(budget.id),
@@ -626,15 +782,22 @@ class BudgetGovernor:
             "status": budget.status.value,
             "exhaustion_reason": budget.exhaustion_reason,
             "is_cost_estimated": budget.is_cost_estimated,
-            "limits": {field: getattr(budget, field) for field in sorted(LIMIT_FIELDS)},
+            "limits": {
+                field: (
+                    float(getattr(budget, field))
+                    if isinstance(getattr(budget, field), Decimal)
+                    else getattr(budget, field)
+                )
+                for field in sorted(LIMIT_FIELDS)
+            },
             "consumed": {
-                "cost_usd": committed_cost,
-                "actual_cost_usd": budget.consumed_actual_cost_usd,
-                "estimated_cost_usd": budget.consumed_estimated_cost_usd,
+                "cost_usd": float(committed_cost),
+                "actual_cost_usd": float(budget.consumed_actual_cost_usd),
+                "estimated_cost_usd": float(budget.consumed_estimated_cost_usd),
                 "input_tokens": budget.consumed_input_tokens,
                 "output_tokens": budget.consumed_output_tokens,
                 "total_tokens": budget.consumed_total_tokens,
-                "runtime_seconds": budget.consumed_runtime_ms / 1000,
+                "runtime_seconds": float(budget.consumed_runtime_ms / 1000),
                 "agent_attempts": budget.total_agent_attempts,
                 "remediation_turns": budget.remediation_turns_count,
                 "replan_count": budget.replan_count,
@@ -642,7 +805,7 @@ class BudgetGovernor:
             "reserved": {
                 "input_tokens": budget.reserved_input_tokens,
                 "output_tokens": budget.reserved_output_tokens,
-                "cost_usd": budget.reserved_cost_usd,
+                "cost_usd": float(budget.reserved_cost_usd),
                 "active_reservations": budget.active_reservations_count,
             },
             "remaining": remaining,
