@@ -13,7 +13,7 @@
 |---|---|---|---|---|---|---|
 | **TR-01** | Spoofed Verifier Identity & Audit Corruption (V1.3 R1) | **HIGH** | HIGH | Governance & Trust | Low | **RESOLVED (M1.4-1)** |
 | **TR-02** | Concurrent Ingestion Race & Partial Rollback Corruption (V1.3 R2) | **HIGH** | MEDIUM | Relational Consistency | Medium | **RESOLVED (M1.4-1)** |
-| **TR-03** | Runaway Execution Costs & Token Depletion in Autonomous Loops | **CRITICAL** | HIGH | Operational Cost | Low-Medium | PENDING (M1.4-2) |
+| **TR-03** | Runaway Execution Costs & Token Depletion in Autonomous Loops | **CRITICAL** | HIGH | Operational Cost | Low-Medium | **RESOLVED (M1.4-2)** |
 | **TR-04** | Infinite Replanning Cycles & Graph Deadlocks | **HIGH** | MEDIUM | Orchestrator Liveness | Medium | PENDING (M1.4-3) |
 | **TR-05** | Repository Worktree Leaks & Working Tree Contamination | **CRITICAL** | LOW-MEDIUM | User Data Integrity | Medium | PENDING (M1.4-4) |
 | **TR-06** | Evaluator Sycophancy & False Positive Verifications | **MEDIUM** | HIGH | Quality Assurance | Medium | PENDING (M1.4-5) |
@@ -58,18 +58,23 @@
 ---
 
 ### TR-03: Runaway Execution Costs & Token Depletion in Autonomous Loops
+- **Status:** **RESOLVED (Milestone M1.4-2)**
 - **Severity:** CRITICAL
-- **Likelihood:** HIGH
+- **Likelihood:** HIGH (resolved)
 - **Mechanism:** In an autonomous system with dynamic replanning and remediation feedback loops, an agent stuck in a debugging failure cycle (e.g., trying to fix an unsolvable dependency conflict or oscillating between two failing tests) could loop indefinitely, consuming tokens and API quotas.
-- **Architectural Mitigation:**
-  1. **Strict Tri-Partite Budget Bounds:** Every execution is initialized with an immutable `ExecutionBudget`:
-     - `max_cost_usd` (hard cap, default $1.00).
-     - `max_remediation_cycles_per_task` (hard cap, default 3).
-     - `max_total_remediations` (hard cap, default 5 across entire DAG).
-     - `max_replan_count` (hard cap, default 2).
-     - `max_wall_clock_seconds` (hard cap, default 600s).
-  2. **Proactive Budget Governor:** Checked before every task dispatch and every replanning cycle. If any limit is exceeded, the pipeline transitions to `ExecutionStatus.PAUSED`, records `"budget_exhausted"`, and interrupts execution, requiring operator authorization to expand limits.
-- **Verification Strategy:** Integration test configuring an intentionally failing task with `max_remediation_cycles = 2`; assert that the pipeline halts precisely after 2 attempts with status `paused` and does not run unboundedly.
+- **Architectural Resolution Implemented in M1.4-2:**
+  1. **Centralized Execution Budget (`ExecutionBudget`):** Created dedicated PostgreSQL model tracking execution-scoped limits, consumption counters, and active in-flight holds across 6 dimensions:
+     - `max_cost_usd` (default $1.00 USD, distinguishing actual vs. estimated cost).
+     - `max_input_tokens`, `max_output_tokens`, `max_total_tokens` (defaults 250k / 50k / 300k).
+     - `max_agent_attempts` (default 10) and `max_task_attempts` (default 3).
+     - `max_remediation_turns` (default 5).
+     - `max_replan_count` (default 2).
+     - `max_runtime_seconds` (default 600s).
+  2. **Atomic Two-Phase Reservation:** Implemented `BudgetGovernor.reserve` with row-level locks (`SELECT ... FOR UPDATE`), ensuring parallel dispatch waves cannot oversubscribe remaining budget.
+  3. **Hold Tracking & Crash Recovery (`BudgetReservation`):** In-flight tasks hold capacity with an expiration lease (`expires_at`); overdue holds from crashed workers are reclaimed automatically without budget leakage.
+  4. **LangGraph Pipeline Halting & Resumption:** `dispatch_task_node` captures budget refusals, halts cleanly with `budget_exhausted=True`, routes to `END`, and preserves all completed work. Operators can review via `GET /executions/{id}/budget` and raise limits via `POST /executions/{id}/budget/increase` to resume.
+- **Verification:** 20/20 real PostgreSQL integration tests passing in `backend/tests/test_v1_4_budget_governance.py` (covering concurrent over-reservation prevention, crash recovery, resume after restart, and multi-wave sharing).
+
 
 ---
 

@@ -302,6 +302,57 @@ export interface ArtifactLineage {
   supersedes: Artifact[];
 }
 
+// Execution budget governor (mirrors backend/app/schemas/budget.py)
+export type BudgetStatus = 'active' | 'warning' | 'exhausted' | 'completed' | 'cancelled';
+
+export interface BudgetConsumed {
+  cost_usd: number;
+  actual_cost_usd: number;
+  estimated_cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  runtime_seconds: number;
+  agent_attempts: number;
+  remediation_turns: number;
+  replan_count: number;
+}
+
+export interface BudgetReserved {
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  active_reservations: number;
+}
+
+export interface BudgetLimits {
+  max_cost_usd: number | null;
+  max_input_tokens: number | null;
+  max_output_tokens: number | null;
+  max_total_tokens: number | null;
+  max_agent_attempts: number | null;
+  max_task_attempts: number | null;
+  max_remediation_turns: number | null;
+  max_replan_count: number | null;
+  max_runtime_seconds: number | null;
+}
+
+export interface BudgetSummary {
+  budget_id: string;
+  execution_id: string;
+  status: BudgetStatus;
+  exhaustion_reason: string | null;
+  is_cost_estimated: boolean;
+  limits: BudgetLimits;
+  consumed: BudgetConsumed;
+  reserved: BudgetReserved;
+  remaining: Partial<Record<keyof BudgetLimits, number | null>>;
+  utilization: Record<string, number | null>;
+}
+
+/** Partial update. Omitted keys keep their value; explicit null clears a limit. */
+export type BudgetLimitsUpdate = Partial<BudgetLimits>;
+
 export interface PaginatedResponse<T> {
   items: T[];
   total: number;

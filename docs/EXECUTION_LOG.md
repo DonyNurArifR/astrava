@@ -566,4 +566,44 @@
   - Updated `docs/V1_4_TECHNICAL_RISKS.md` marking TR-01 and TR-02 RESOLVED.
   - Authored `docs/V1_4_M1_RELEASE_REPORT.md`.
 
+## 2026-11-03 — V1.4-M2: Execution Budgets & Resource Governance
+- **Role Alignment:** Lead AI Architect & Independent Reviewer: Gemini. Executor: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Centralized, persistent execution budget governance preventing runaway autonomous loops, token exhaustion, and unbounded resource consumption (TR-03).
+- **Core Architecture & Data Modeling:**
+  - Created `backend/app/models/budget.py`:
+    - `ExecutionBudget`: Tracks execution-scoped limits, consumption counters, and active reservation holds across 6 dimensions.
+    - `BudgetReservation`: In-flight holds with unique key per budget, timeout-based lease (`expires_at`), and status lifecycle (`ACTIVE`, `RECONCILED`, `RELEASED`, `EXPIRED`).
+    - 12 PostgreSQL check constraints and composite indexes.
+  - Authored Alembic migration `backend/alembic/versions/9c4d2e1f8a7b_add_execution_budgets_and_reservations.py` revising `7a8e1b2c3d4e`. Clean upgrade, downgrade, and re-upgrade verified against PostgreSQL 16 container.
+- **BudgetGovernor Service Implementation (`backend/app/services/budget_governor.py`):**
+  - Atomic two-phase reservation with `SELECT ... FOR UPDATE` serialization.
+  - Reclaim of expired reservations from crashed workers without budget leakage.
+  - Settle reservations with actual token, duration, and cost metrics; release unrun tasks cleanly.
+  - Threshold triggers: 80% marks `WARNING`, 100% marks `EXHAUSTED` and raises `BudgetExhaustedError`.
+  - Floating point arithmetic safety: clamped and rounded `reserved_cost_usd` to prevent precision drift violating check constraints.
+- **LangGraph Workflow Integration:**
+  - `runner.py`: Automatically initializes budget at pipeline start.
+  - `workflow_graph.py`:
+    - `dispatch_task_node`: Atomically reserves entire wave capacity before dispatch; halts pipeline cleanly if exhausted.
+    - `_execute_single_task`: Reconciles actual tokens and costs upon completion; releases hold on failure.
+    - `plan_node`: Tracks and limits dynamic replanning attempts via `record_replan`.
+    - Conditional routing on `budget_exhausted` stops execution immediately.
+- **REST APIs & Frontend UI:**
+  - Schemas in `backend/app/schemas/budget.py` and endpoints in `backend/app/api/v1/executions.py` (`GET /{id}/budget`, `POST /{id}/budget/increase`).
+  - Added `BudgetIndicator.tsx` to frontend with token/cost progress bars, actual vs estimated cost badge, attempts gauge, exhaustion alerts, and operator increase modal.
+  - Updated `ExecutionsPage.tsx` and API client.
+- **Verification & Acceptance:**
+  - Authored `backend/tests/test_v1_4_budget_governance.py` with 20 real PostgreSQL integration tests (all 20/20 passed in 2.40s).
+  - Full backend pytest suite: **138/138 tests passed** in 22.89s (up from 118, +20 new tests).
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 94 backend files.
+  - Frontend Vitest suite: 9/9 test files (16 tests) passed in 1.68s; `npm run lint` 0 errors; `npm run build` clean in 242ms.
+  - Database schema: current migration head `9c4d2e1f8a7b`.
+- **Documentation & Reporting:**
+  - Added Section 8 in `docs/ARCHITECTURE.md`.
+  - Added ADR-014 in `docs/DECISIONS.md`.
+  - Updated `docs/ROADMAP.md` and `docs/PROGRESS.md`.
+  - Updated `docs/V1_4_TECHNICAL_RISKS.md` marking TR-03 RESOLVED.
+  - Authored `docs/V1_4_M2_RELEASE_REPORT.md`.
+
+
 

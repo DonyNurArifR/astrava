@@ -26,6 +26,11 @@ from app.orchestrator.state import OrchestrationState
 from app.providers.base import ProviderRequest, ProviderStatus
 from app.providers.factory import ProviderFactory
 from app.services.agent_service import DEFAULT_AGENTS
+from app.services.budget_governor import (
+    BudgetExhaustedError,
+    BudgetGovernor,
+    ReservationNotFoundError,
+)
 from app.services.memory_service import MemoryService
 from app.services.retrieval.schemas import RetrievalQuery
 from app.services.retrieval.service import RetrievalService
@@ -138,11 +143,35 @@ async def retrieve_knowledge_node(state: OrchestrationState) -> dict[str, Any]:
         }
 
 
+async def _record_replan(state: OrchestrationState) -> None:
+    """Count one replanning iteration against the execution budget. Raises BudgetExhaustedError."""
+    execution_id = uuid.UUID(state["execution_id"])
+    async with AsyncSessionLocal() as session:
+        await BudgetGovernor.initialize_budget(
+            session, execution_id, uuid.UUID(state["project_id"])
+        )
+        await BudgetGovernor.record_replan(session, execution_id)
+        await session.commit()
+
+
 async def plan_node(state: OrchestrationState) -> dict[str, Any]:
     # If plan already exists in state (e.g. on resume), preserve existing plan and tasks
     if state.get("plan"):
         logger.info("Preserving existing plan on pipeline resume.")
         return {}
+
+    if state.get("replanning") or (state.get("replan_count") or 0) > 0:
+        try:
+            await _record_replan(state)
+        except BudgetExhaustedError as exc:
+            message = f"Budget exhausted: {exc}"
+            logger.warning("Replan refused for execution %s: %s", state.get("execution_id"), exc)
+            return {
+                "status": "failed",
+                "error": message,
+                "error_message": message,
+                "budget_exhausted": True,
+            }
 
     logger.info("Executing plan_node for objective: %s", state.get("objective"))
     studio_type_str = state.get("studio_type", "saas")
@@ -222,7 +251,68 @@ async def approval_check_node(state: OrchestrationState) -> dict[str, Any]:
     }
 
 
+def _reservation_timeout_seconds(task: dict[str, Any], state: OrchestrationState) -> int:
+    """Projected runtime for a task's reservation: one attempt's timeout.
+
+    The governor checks consumed runtime + this value against max_runtime_seconds, so
+    multiplying by retries would refuse every wave after the first under default limits.
+    """
+    snapshots = state.get("agent_snapshots", {}) or {}
+    agent_slug = task.get("assigned_agent_slug", "developer")
+    agent_info = snapshots.get(agent_slug) or AGENT_MAP.get(agent_slug, {})
+    exec_config = agent_info.get("execution_config", {}) or {}
+    per_attempt = exec_config.get("timeout_seconds", settings.CLAUDE_EXECUTION_TIMEOUT_SECONDS)
+    return max(1, int(per_attempt))
+
+
+async def _settle_reservation(
+    reservation_id: uuid.UUID,
+    usage_records: list[dict[str, Any]] | None,
+) -> None:
+    """Reconcile a reservation with actual usage, or release it when usage is None (aborted)."""
+    try:
+        async with AsyncSessionLocal() as session:
+            if usage_records is None:
+                await BudgetGovernor.release(session, reservation_id)
+            else:
+                await BudgetGovernor.reconcile(
+                    session,
+                    reservation_id,
+                    actual_input_tokens=sum(int(r.get("input_tokens") or 0) for r in usage_records),
+                    actual_output_tokens=sum(
+                        int(r.get("output_tokens") or 0) for r in usage_records
+                    ),
+                    duration_ms=sum(int(r.get("duration_ms") or 0) for r in usage_records),
+                    actual_cost_usd=sum(float(r.get("cost_usd") or 0.0) for r in usage_records),
+                )
+            await session.commit()
+    except ReservationNotFoundError:
+        # Reclaimed as expired or already settled; the work is not re-charged.
+        logger.warning("Budget reservation %s already settled or expired", reservation_id)
+
+
 async def _execute_single_task(
+    task: dict[str, Any],
+    state: OrchestrationState,
+    project_work_dir: Path,
+    reservation_id: uuid.UUID | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Run a task, then settle its budget reservation (reconcile on finish, release on abort)."""
+    if reservation_id is None:
+        return await _run_single_task(task, state, project_work_dir)
+    try:
+        updated_task, usage_records = await _run_single_task(task, state, project_work_dir)
+    except BaseException:
+        try:
+            await _settle_reservation(reservation_id, None)
+        except Exception:
+            logger.exception("Failed to release budget reservation %s", reservation_id)
+        raise
+    await _settle_reservation(reservation_id, usage_records)
+    return updated_task, usage_records
+
+
+async def _run_single_task(
     task: dict[str, Any],
     state: OrchestrationState,
     project_work_dir: Path,
@@ -429,9 +519,43 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
 
     logger.info("Dispatching %d task(s) concurrently in this stage", len(ready_tasks))
 
+    # Reserve budget for the whole wave atomically: any refusal rolls back every
+    # reservation in this wave and nothing is dispatched.
+    execution_id = uuid.UUID(state["execution_id"])
+    reservations: dict[str, uuid.UUID] = {}
+    try:
+        async with AsyncSessionLocal() as session:
+            await BudgetGovernor.initialize_budget(
+                session, execution_id, uuid.UUID(state["project_id"])
+            )
+            for t in ready_tasks:
+                reservation = await BudgetGovernor.reserve(
+                    session,
+                    execution_id,
+                    reservation_key=f"task:{t['task_id']}",
+                    task_id=t["task_id"],
+                    agent_slug=t.get("assigned_agent_slug"),
+                    purpose="agent_dispatch",
+                    timeout_seconds=_reservation_timeout_seconds(t, state),
+                )
+                reservations[t["task_id"]] = reservation.id
+            await session.commit()
+    except BudgetExhaustedError as exc:
+        message = f"Budget exhausted: {exc}"
+        logger.warning("Dispatch halted for execution %s: %s", execution_id, exc)
+        return {
+            "status": "failed",
+            "error": message,
+            "error_message": message,
+            "budget_exhausted": True,
+        }
+
     # Execute independent tasks concurrently via asyncio.gather
     results = await asyncio.gather(
-        *[_execute_single_task(t, state, project_work_dir) for t in ready_tasks],
+        *[
+            _execute_single_task(t, state, project_work_dir, reservations.get(t["task_id"]))
+            for t in ready_tasks
+        ],
         return_exceptions=True,
     )
 
@@ -842,8 +966,11 @@ def route_after_approval_check(state: OrchestrationState) -> Literal["dispatch_t
     return "dispatch_task"
 
 
-def route_after_dispatch(state: OrchestrationState) -> Literal["verify"]:
-    # Always route to verify so completed tasks in the batch have their output processed
+def route_after_dispatch(state: OrchestrationState) -> Literal["verify", "__end__"]:
+    # Budget refusal halts before any task ran: nothing to verify, end the run.
+    if state.get("budget_exhausted"):
+        return "__end__"
+    # Otherwise route to verify so completed tasks in the batch have their output processed
     return "verify"
 
 
@@ -888,7 +1015,14 @@ def build_orchestrator_graph():
         },
     )
 
-    workflow.add_edge("dispatch_task", "verify")
+    workflow.add_conditional_edges(
+        "dispatch_task",
+        route_after_dispatch,
+        {
+            "verify": "verify",
+            "__end__": END,
+        },
+    )
     workflow.add_edge("verify", "artifact")
 
     workflow.add_conditional_edges(

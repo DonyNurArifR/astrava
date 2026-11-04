@@ -3,6 +3,8 @@ import type {
   Approval,
   Artifact,
   ArtifactLineage,
+  BudgetLimitsUpdate,
+  BudgetSummary,
   Execution,
   MemoryAuditLog,
   MemoryConflictItem,
@@ -80,6 +82,14 @@ export const api = {
     fetch(`${API_BASE}/executions/${id}/pause`, { method: 'POST' }).then(r => handleResponse<Execution>(r)),
   resumeExecution: (id: string) =>
     fetch(`${API_BASE}/executions/${id}/resume`, { method: 'POST' }).then(r => handleResponse<Execution>(r)),
+  getExecutionBudget: (executionId: string): Promise<BudgetSummary> =>
+    fetch(`${API_BASE}/executions/${executionId}/budget`).then(r => handleResponse<BudgetSummary>(r)),
+  increaseExecutionBudget: (executionId: string, limits: BudgetLimitsUpdate): Promise<BudgetSummary> =>
+    fetch(`${API_BASE}/executions/${executionId}/budget/increase`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(limits),
+    }).then(r => handleResponse<BudgetSummary>(r)),
 
   // Approvals
   getApprovals: (pendingOnly = false) =>

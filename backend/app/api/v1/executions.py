@@ -5,7 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.execution import ExecutionStatus
+from app.schemas.budget import BudgetLimitsUpdate, BudgetSummaryResponse
 from app.schemas.execution import ExecutionCreate, ExecutionRead
+from app.services.budget_governor import BudgetGovernor, BudgetGovernorError
 from app.services.workflow_service import WorkflowService
 
 router = APIRouter(prefix="/executions", tags=["Executions"])
@@ -74,3 +76,30 @@ async def resume_execution(
         db, execution_id, "execution_resumed", {"reason": "Manual operator resume"}
     )
     return ExecutionRead.model_validate(execution)
+
+
+@router.get("/{execution_id}/budget", response_model=BudgetSummaryResponse)
+async def get_execution_budget(
+    execution_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> BudgetSummaryResponse:
+    if await BudgetGovernor.get_budget(db, execution_id) is None:
+        raise HTTPException(status_code=404, detail="Budget not found for execution")
+    summary = await BudgetGovernor.get_summary(db, execution_id)
+    return BudgetSummaryResponse(**summary)
+
+
+@router.post("/{execution_id}/budget/increase", response_model=BudgetSummaryResponse)
+async def increase_execution_budget(
+    execution_id: uuid.UUID,
+    data: BudgetLimitsUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> BudgetSummaryResponse:
+    if await BudgetGovernor.get_budget(db, execution_id) is None:
+        raise HTTPException(status_code=404, detail="Budget not found for execution")
+    try:
+        await BudgetGovernor.increase_budget(db, execution_id, data.model_dump(exclude_unset=True))
+    except BudgetGovernorError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    summary = await BudgetGovernor.get_summary(db, execution_id)
+    return BudgetSummaryResponse(**summary)

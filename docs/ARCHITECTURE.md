@@ -312,4 +312,37 @@ To resolve concurrent ingestion races and rollback transaction corruption (V1.3 
   - Losing workers encountering `IntegrityError` on the operation token enter an asynchronous polling loop with backoff using fresh database sessions, waiting for the winner to complete and returning the winning result without running redundant extraction or failing.
   - Individual memory creation within `ingest_knowledge_node` is wrapped in SQLAlchemy nested savepoints (`async with session.begin_nested():`). A duplicate collision or candidate error rolls back only the savepoint, leaving preceding successful candidates intact in the transaction.
 
+---
+
+## 8. V1.4 Execution Budgets & Resource Governance (M1.4-2)
+
+### 8.1 Centralized Budget Governor Architecture
+To prevent runaway autonomous loops, token exhaustion, and unbounded resource consumption (TR-03), ASTRAVA V1.4 introduces the centralized `BudgetGovernor` service (`backend/app/services/budget_governor.py`):
+- **Execution-Scoped Ownership:**
+  - Budgets are owned by the `WorkflowExecution`, not individual tasks, agents, or HTTP requests.
+  - Initialized idempotently at pipeline creation via `BudgetGovernor.initialize_budget`.
+  - Persisted in PostgreSQL table `execution_budgets` with row-level locking (`SELECT ... FOR UPDATE`).
+- **Atomic Two-Phase Reservation Protocol:**
+  - *Reservation (`reserve`):* Prior to dispatching an agent wave or task, the governor atomically projects usage (`consumed + reserved + requested <= limit`).
+  - *Hold (`budget_reservations`):* In-flight capacity is held as an active reservation row with a timeout-based lease (`expires_at`).
+  - *Settle (`reconcile`):* Upon task completion, the hold is released and actual token, runtime, and cost usage are committed to consumed counters.
+  - *Release (`release`):* If a task is aborted, cancelled, or fails before execution, the reservation is released without penalizing consumed counters.
+  - *Crash Recovery (`reclaim_expired_reservations`):* If a worker crashes midway, expired active reservations are automatically reclaimed.
+
+### 8.2 Governed Resource Dimensions
+The `BudgetGovernor` independently tracks and bounds 6 distinct dimensions:
+1. **Monetary Budget (`max_cost_usd`):** Default $1.00 USD. Distinguishes provider-reported actual cost from estimated cost (`is_cost_estimated` flag).
+2. **Token Budget (`max_input_tokens`, `max_output_tokens`, `max_total_tokens`):** Defaults 250k input / 50k output / 300k total tokens. Enforces hard caps on LLM context windows.
+3. **Agent & Task Attempt Budget (`max_agent_attempts`, `max_task_attempts`):** Default 10 execution-wide attempts, 3 attempts per task. Prevents infinite retry loops.
+4. **Remediation Turns (`max_remediation_turns`):** Default 5 remediation turns per execution.
+5. **Dynamic Replanning Budget (`max_replan_count`):** Default 2 replans per execution. Re-entering planning nodes increments counters without resetting previous consumption.
+6. **Runtime Budget (`max_runtime_seconds`):** Default 600 seconds (10 minutes) total execution duration.
+
+### 8.3 Exhaustion Semantics & Resumption
+- When any hard ceiling is reached, the governor transitions `ExecutionBudget.status` to `EXHAUSTED`, records `exhaustion_reason`, and raises `BudgetExhaustedError`.
+- In LangGraph orchestration (`workflow_graph.py`), `dispatch_task` captures the refusal, sets `budget_exhausted=True`, and cleanly routes to `END`.
+- Pre-existing completed tasks, artifacts, and execution diagnostics are strictly preserved.
+- **Resumability:** An authorized operator can inspect the budget via `GET /api/v1/executions/{id}/budget` and raise limits via `POST /api/v1/executions/{id}/budget/increase`. Upon increasing limits, status returns to `ACTIVE`, and the execution can resume from its checkpoint without re-running completed work.
+
+
 

@@ -2,6 +2,12 @@ from app.db.base import Base, TimestampMixin, UUIDMixin
 from app.models.agent import Agent
 from app.models.approval import Approval, ApprovalStatus
 from app.models.artifact import Artifact, ArtifactType, ArtifactVerificationStatus
+from app.models.budget import (
+    BudgetReservation,
+    BudgetReservationStatus,
+    BudgetStatus,
+    ExecutionBudget,
+)
 from app.models.execution import ExecutionEvent, ExecutionStatus, WorkflowExecution
 from app.models.memory import (
     MemoryAuditAction,
@@ -50,4 +56,8 @@ __all__ = [
     "MemoryConflictStatus",
     "ModelExecution",
     "ModelExecutionStatus",
+    "ExecutionBudget",
+    "BudgetReservation",
+    "BudgetStatus",
+    "BudgetReservationStatus",
 ]

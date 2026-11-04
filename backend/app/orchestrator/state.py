@@ -22,6 +22,11 @@ class OrchestrationState(TypedDict, total=False):
     task_db_ids: dict[str, str]
     synced_usage_count: int
     error: str | None
+    error_message: str | None
+    # Execution budget governance (BudgetGovernor)
+    budget_exhausted: bool
+    replanning: bool
+    replan_count: int
     # Project Intelligence & Memory (V1.3 M1.3-5)
     retrieved_memories: list[dict[str, Any]]
     retrieved_artifacts: list[dict[str, Any]]

@@ -100,3 +100,15 @@
   5. *Nested Transaction Savepoints:* Wrap candidate inserts inside `async with session.begin_nested():`. If an individual candidate fails or collides with a concurrent insert, only that candidate's savepoint is rolled back, leaving preceding valid candidates intact.
 - **Consequences:** Relational engine-level guarantee against duplicate memory creation; zero transaction corruption on candidate errors; seamless handling of concurrent pipeline execution races.
 
+## ADR-014: Centralized Execution Budget Governance & Atomic Two-Phase Reservation
+- **Status:** Accepted
+- **Context:** Autonomous agents, dynamic replanning, and iterative remediation turns can consume unbounded tokens, API quotas, and runtime if not strictly governed. In-memory counters are vulnerable to process restarts, parallel wave races, and multi-worker double-spending (V1.4 TR-03).
+- **Decision:**
+  1. *Execution-Level Ownership:* Attach `ExecutionBudget` to `workflow_executions` (1-to-1) rather than individual tasks or ephemeral processes.
+  2. *Two-Phase Reservation Protocol:* Enforce atomic reservation prior to agent dispatch using row-level database locks (`SELECT ... FOR UPDATE` on `execution_budgets`).
+  3. *In-Flight Hold Tracking (`BudgetReservation`):* Record reservations with an expiration lease (`expires_at`). Overdue active reservations from crashed workers are reclaimed automatically.
+  4. *Multi-Dimension Governance:* Enforce independent limits across cost ($1.00 USD), input/output tokens (250k/50k), agent/task attempts (10/3), remediation turns (5), replans (2), and runtime (600s). Distinguish actual provider-reported cost from estimated cost (`is_cost_estimated`).
+  5. *Graceful Exhaustion & Resumption:* On limit exhaustion, transition to `EXHAUSTED`, record `exhaustion_reason`, preserve all completed work/artifacts, and halt new dispatches. Enable operators to resume executions by increasing limits via `POST /api/v1/executions/{id}/budget/increase`.
+- **Consequences:** Guaranteed protection against runaway autonomous loops; deterministic concurrency safety across parallel waves; zero resource leakage on worker crashes; audit-ready budget accounting.
+
+

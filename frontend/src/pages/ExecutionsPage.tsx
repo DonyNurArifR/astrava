@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import type { Execution } from '../types/api';
+import { BudgetIndicator } from '../components/budget/BudgetIndicator';
 
 export const ExecutionsPage: React.FC = () => {
   const [executions, setExecutions] = useState<Execution[]>([]);
@@ -232,6 +233,12 @@ export const ExecutionsPage: React.FC = () => {
                   {selectedExecution.error_message}
                 </div>
               )}
+
+              <BudgetIndicator
+                key={selectedExecution.id}
+                executionId={selectedExecution.id}
+                refreshKey={`${selectedExecution.status}|${selectedExecution.updated_at}`}
+              />
 
               {/* Multi-Agent DAG Tasks & Lifecycle */}
               {selectedExecution.state_data?.tasks && (

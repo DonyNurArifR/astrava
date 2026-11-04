@@ -22,6 +22,7 @@ from app.schemas.workflow import WorkflowCreate
 from app.services.agent_service import AgentService
 from app.services.approval_service import ApprovalService
 from app.services.artifact_service import ArtifactService
+from app.services.budget_governor import BudgetGovernor
 from app.services.task_service import TaskService
 from app.services.usage_service import UsageService
 from app.services.workflow_service import WorkflowService
@@ -64,6 +65,7 @@ class OrchestrationRunner:
             },
         )
         execution = await WorkflowService.create_execution(db, exec_data)
+        await BudgetGovernor.initialize_budget(db, execution.id, project_id)
         await WorkflowService.update_execution_status(db, execution.id, ExecutionStatus.RUNNING)
         await WorkflowService.record_event(
             db,
