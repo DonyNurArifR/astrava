@@ -212,9 +212,13 @@ async def _require_locked_budget(db: AsyncSession, execution_id: uuid.UUID) -> E
 
 
 async def _lock_active_reservation(
-    db: AsyncSession, reservation_id: uuid.UUID, fence_token: str | None = None
+    db: AsyncSession, reservation_id: uuid.UUID, fence_token: str
 ) -> tuple[ExecutionBudget, BudgetReservation]:
     """Lock the parent budget, then the ACTIVE reservation. Lock order: budget -> reservation."""
+    if not fence_token:
+        raise FencingTokenMismatchError(
+            f"Fencing token is required to settle or release reservation {reservation_id}"
+        )
     reservation = await db.get(BudgetReservation, reservation_id)
     if reservation is None:
         raise ReservationNotFoundError(f"Reservation {reservation_id} does not exist")
@@ -236,7 +240,7 @@ async def _lock_active_reservation(
         raise ReservationNotFoundError(
             f"Reservation {reservation_id} is not ACTIVE (current status: {reservation.status})"
         )
-    if fence_token is not None and locked.fence_token != fence_token:
+    if locked.fence_token != fence_token:
         raise FencingTokenMismatchError(
             f"Fencing token mismatch for reservation {reservation_id}: stale worker rejected"
         )
@@ -595,22 +599,24 @@ class BudgetGovernor:
         actual_input_tokens: int,
         actual_output_tokens: int,
         duration_ms: int,
+        fence_token: str,
         actual_cost_usd: Decimal | float | None = None,
         is_cost_estimated: bool = False,
         is_cost_zero_confirmed: bool = False,
         is_remediation: bool = False,
-        fence_token: str | None = None,
+        attempt_metadata: dict[str, Any] | None = None,
     ) -> ExecutionBudget:
         """Settle an ACTIVE reservation with actual usage, releasing its hold.
 
         If ``actual_cost_usd`` is None (or 0.0 with non-zero tokens without confirmation),
         the reserved estimate is charged and marked estimated. Missing metrics never
         coerce to $0.00 actual cost (F-03).
-        Validates ``fence_token`` to reject stale workers (F-04).
+        Validates mandatory ``fence_token`` to reject stale workers (F-04 / AUD-M2.2-03).
+        Optionally records ``attempt_metadata`` in reservation.metadata_json (AUD-M2.2-02).
 
         Raises:
             ReservationNotFoundError: no ACTIVE reservation with this id.
-            FencingTokenMismatchError: fence_token does not match active lease.
+            FencingTokenMismatchError: fence_token is missing or does not match active lease.
         """
         cost_decimal = _to_decimal(actual_cost_usd) if actual_cost_usd is not None else None
         _validate_non_negative(
@@ -657,22 +663,26 @@ class BudgetGovernor:
         reservation.status = BudgetReservationStatus.RECONCILED
         reservation.reconciled_cost_usd = cost
         reservation.resolved_at = now
+        if attempt_metadata:
+            reservation.metadata_json = {**reservation.metadata_json, **attempt_metadata}
 
         _apply_thresholds(budget)
         await db.flush()
         return budget
 
     @staticmethod
-    async def release(
-        db: AsyncSession, reservation_id: uuid.UUID, fence_token: str | None = None
-    ) -> None:
-        """Drop an ACTIVE reservation without consuming anything (work was never run)."""
+    async def release(db: AsyncSession, reservation_id: uuid.UUID, fence_token: str) -> None:
+        """Drop an ACTIVE reservation without consuming anything (work was never run).
+
+        Requires mandatory ``fence_token`` proving worker reservation ownership (AUD-M2.2-03).
+        """
         budget, reservation = await _lock_active_reservation(
             db, reservation_id, fence_token=fence_token
         )
         _release_reserved(budget, reservation)
         reservation.status = BudgetReservationStatus.RELEASED
         reservation.resolved_at = datetime.now(UTC)
+        await db.flush()
         await db.flush()
 
     @staticmethod

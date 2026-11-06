@@ -582,6 +582,13 @@ async def test_resumed_execution_with_reconciled_reservation(db_session, tmp_pat
             duration_ms=50,
             actual_cost_usd=0.01,
             fence_token=res.fence_token,
+            attempt_metadata={
+                "success": True,
+                "provider_status": "success",
+                "exit_code": 0,
+                "has_output": True,
+                "output_text": "Completed task result",
+            },
         )
         await db.commit()
 

@@ -647,6 +647,40 @@
   - Updated `docs/ROADMAP.md` and `docs/PROGRESS.md`.
   - Authored `docs/V1_4_M2_2_RELEASE_REPORT.md`.
 
+## 2026-11-06 — V1.4-M2.2.2: Workflow Recovery & Security Hardening
+- **Role Alignment:** Lead AI Architect & Independent Reviewer: Gemini. Executor: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Remediation of workflow recovery and security limitations identified in M1.4-2.2.1 Independent Acceptance Audit (AUD-M2.2-01 through AUD-M2.2-04 plus real multi-process crash verification).
+- **Core Orchestrator Hardening (`backend/app/orchestrator/workflow_graph.py`):**
+  - **Explicit Task Identity Pairing (AUD-M2.2-01):** Replaced dangerous positional index indexing (`results[i]`) with `zip(tasks_to_dispatch, results, strict=True)` and `target_task = task_map.get(task_id, task_dispatched)`. Tested with 2-task waves with first task pre-completed, 2-task waves with second task pre-completed, 3 parallel tasks with sibling failure isolation, 4-task waves with multiple completed tasks, and asynchronous out-of-order completions.
+  - **Decoupled Settlement & Verified Task Completion (AUD-M2.2-02):**
+    - Enforced rule: a `RECONCILED` reservation $\neq$ task completion.
+    - Captures attempt metadata (`success`, `provider_status`, `exit_code`, `has_output`, `output_text`) into `reservation.metadata_json` on reconcile.
+    - Resumed workflows verify attempt success (`res_0.metadata_json["success"] is True`), presence of non-empty output, and physical presence of expected deliverable files on disk.
+    - Tasks whose attempt 0 failed are not falsely marked complete; attempts used are queried, reserving next attempt (`attempt:N`) dynamically if retries remain, or failing if retries are exhausted.
+- **Budget Governor Service Hardening (`backend/app/services/budget_governor.py`):**
+  - **Mandatory Non-Optional Fencing Tokens (AUD-M2.2-03):** Made `fence_token: str` non-optional in `_lock_active_reservation()`, `reconcile()`, and `release()`. Replaced silent `None` bypasses with strict rejection raising `FencingTokenMismatchError`.
+  - Enhanced `reconcile()` to accept and persist `attempt_metadata` in reservation records.
+- **API Security Hardening (`backend/app/api/v1/executions.py`):**
+  - **Operator Authentication on Execution Mutation Endpoints (AUD-M2.2-04):** Protected `POST /executions`, `POST /executions/{id}/pause`, and `POST /executions/{id}/resume` with `OperatorContext = Depends(require_authorized_verifier)`.
+  - Rejects unauthenticated requests with HTTP 401 when API keys are configured.
+  - Recorded authenticated operator identity (`actor_id`) directly into execution telemetry events.
+- **Multi-Process Crash Recovery Verification:**
+  - Implemented `test_real_multiprocess_orchestrator_crash_recovery` in `tests/test_v1_4_workflow_recovery.py` using separate OS processes via `multiprocessing.Process` and real `os.kill(proc.pid, signal.SIGKILL)`.
+  - Proved that when worker process 1 is abruptly terminated via SIGKILL while holding an active reservation, resuming worker process 2 reclaims the expired lease via `_reclaim_expired()` and executes the task to completion without deadlocks or counter corruption.
+- **Verification & Acceptance:**
+  - Authored `backend/tests/test_v1_4_workflow_recovery.py` with 10 comprehensive tests (10/10 passed in 3.70s).
+  - Maintained `backend/tests/test_v1_4_budget_governance.py` (20/20 passed) and `backend/tests/test_v1_4_budget_hardening.py` (10/10 passed).
+  - Full backend pytest suite: **158/158 tests passed** in 26.90s.
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 96 backend files.
+  - Frontend Vitest suite: 9/9 test files (16 tests) passed in 1.44s; Vite build clean in 170ms.
+  - Alembic migration head: `d4e5f6a1b2c3` (clean, verified).
+- **Documentation & Reporting:**
+  - Added Section 8.5 in `docs/ARCHITECTURE.md`.
+  - Added ADR-016 in `docs/DECISIONS.md`.
+  - Updated `docs/ROADMAP.md` and `docs/PROGRESS.md`.
+  - Authored release documentation in `docs/EXECUTION_LOG.md`.
+
+
 
 
 

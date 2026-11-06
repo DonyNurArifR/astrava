@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
-from app.models.budget import BudgetReservationStatus
+from app.models.budget import BudgetReservation, BudgetReservationStatus
 from app.models.execution import WorkflowExecution
 from app.models.memory import IngestionOperation, IngestionOperationStatus, ProjectMemory
 from app.models.project import StudioType
@@ -271,7 +271,7 @@ def _reservation_timeout_seconds(task: dict[str, Any], state: OrchestrationState
 async def _settle_reservation(
     reservation_id: uuid.UUID,
     usage_records: list[dict[str, Any]] | None,
-    fence_token: str | None = None,
+    fence_token: str,
 ) -> None:
     """Reconcile a reservation with actual usage, or release it when usage is None (aborted)."""
     try:
@@ -315,13 +315,13 @@ async def _execute_single_task(
         try:
             updated_task, usage_records = await _run_single_task(task, state, project_work_dir)
         except BaseException:
-            if res_id:
+            if res_id and fence:
                 try:
                     await _settle_reservation(res_id, None, fence_token=fence)
                 except Exception:
                     pass
             raise
-        if res_id:
+        if res_id and fence:
             await _settle_reservation(res_id, usage_records, fence_token=fence)
         return updated_task, usage_records
 
@@ -425,7 +425,7 @@ async def _run_single_task(
             "exit_code": task["exit_code"],
         }
         usage_records.append(u_rec)
-        if init_res_id is not None:
+        if init_res_id is not None and init_fence_token is not None:
             try:
                 async with AsyncSessionLocal() as session:
                     await BudgetGovernor.reconcile(
@@ -434,10 +434,17 @@ async def _run_single_task(
                         actual_input_tokens=0,
                         actual_output_tokens=0,
                         duration_ms=report.total_duration_ms,
+                        fence_token=init_fence_token,
                         actual_cost_usd=Decimal("0.0"),
                         is_cost_estimated=False,
                         is_cost_zero_confirmed=True,
-                        fence_token=init_fence_token,
+                        attempt_metadata={
+                            "success": report.overall_passed,
+                            "provider_status": "success" if report.overall_passed else "failed",
+                            "exit_code": task["exit_code"],
+                            "has_output": True,
+                            "output_text": output_text,
+                        },
                     )
                     await session.commit()
             except (ReservationNotFoundError, FencingTokenMismatchError) as err:
@@ -540,8 +547,31 @@ Produce the complete deliverable meeting all criteria directly."""
         }
         usage_records.append(u_rec)
 
+        # Determine if attempt succeeded at provider and schema/deliverable levels
+        attempt_is_success = False
+        if resp.status in (ProviderStatus.FAILED, ProviderStatus.TIMEOUT):
+            last_error = resp.error_message or f"Provider returned status {resp.status.value}"
+        elif not resp.output_text.strip():
+            last_error = "Agent produced empty deliverable"
+        else:
+            # Check schema validation if required fields specified
+            output_schema = agent_info.get("output_schema", {})
+            required_fields = output_schema.get("required", [])
+            schema_valid = True
+            if required_fields:
+                parsed_dict = _extract_json_dict(resp.output_text)
+                if parsed_dict:
+                    missing = [f for f in required_fields if f not in parsed_dict]
+                    if missing:
+                        schema_valid = False
+                        last_error = f"Deliverable missing required schema fields: {missing}"
+
+            if schema_valid:
+                attempt_is_success = True
+                success = True
+
         # Settle this attempt immediately with BudgetGovernor
-        if current_res_id is not None:
+        if current_res_id is not None and current_fence is not None:
             actual_cost = (
                 Decimal(str(resp.cost_usd))
                 if (resp.cost_usd is not None and not resp.cost_unavailable)
@@ -555,9 +585,16 @@ Produce the complete deliverable meeting all criteria directly."""
                         actual_input_tokens=resp.input_tokens,
                         actual_output_tokens=resp.output_tokens,
                         duration_ms=resp.duration_ms,
+                        fence_token=current_fence,
                         actual_cost_usd=actual_cost,
                         is_cost_estimated=resp.is_cost_estimated or actual_cost is None,
-                        fence_token=current_fence,
+                        attempt_metadata={
+                            "success": attempt_is_success,
+                            "provider_status": resp.status.value,
+                            "exit_code": resp.exit_code,
+                            "has_output": bool(resp.output_text.strip()),
+                            "output_text": resp.output_text[:4000],
+                        },
                     )
                     await session.commit()
             except (ReservationNotFoundError, FencingTokenMismatchError) as settle_err:
@@ -572,40 +609,8 @@ Produce the complete deliverable meeting all criteria directly."""
         task["exit_code"] = resp.exit_code
         task["retry_count"] = attempt
 
-        if resp.status in (ProviderStatus.FAILED, ProviderStatus.TIMEOUT):
-            last_error = resp.error_message or f"Provider returned status {resp.status.value}"
-        elif not resp.output_text.strip():
-            last_error = "Agent produced empty deliverable"
-        else:
-            # Check schema validation if required fields specified
-            output_schema = agent_info.get("output_schema", {})
-            required_fields = output_schema.get("required", [])
-            if required_fields:
-                parsed_dict = _extract_json_dict(resp.output_text)
-                if parsed_dict:
-                    missing = [f for f in required_fields if f not in parsed_dict]
-                    if missing:
-                        last_error = f"Deliverable missing required schema fields: {missing}"
-                        if attempt < max_retries:
-                            logger.warning(
-                                "Task '%s' deliverable missing schema fields: %s. Retrying (%d/%d)...",
-                                task["task_id"],
-                                missing,
-                                attempt + 1,
-                                max_retries,
-                            )
-                            await asyncio.sleep(1)
-                            continue
-                    else:
-                        success = True
-                        break
-                else:
-                    # Output was not JSON, but succeeded
-                    success = True
-                    break
-            else:
-                success = True
-                break
+        if success:
+            break
 
         if not success and attempt < max_retries:
             logger.warning(
@@ -644,6 +649,7 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
     execution_id = uuid.UUID(state["execution_id"])
     reservations: dict[str, tuple[uuid.UUID, str]] = {}
     tasks_to_dispatch: list[dict[str, Any]] = []
+    failed_ids = list(state.get("failed_task_ids", []))
 
     try:
         async with AsyncSessionLocal() as session:
@@ -651,25 +657,98 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
                 session, execution_id, uuid.UUID(state["project_id"])
             )
             for t in ready_tasks:
-                res_key = f"task:{t['task_id']}:attempt:0"
-                # Crash recovery idempotency: check if attempt 0 already reconciled
-                existing = await BudgetGovernor.get_reservation_by_key(session, budget.id, res_key)
-                if existing is not None and existing.status == BudgetReservationStatus.RECONCILED:
-                    logger.info("Task %s attempt 0 already reconciled in prior run", t["task_id"])
-                    t["status"] = "completed"
+                task_id = t["task_id"]
+                # Query how many attempts have already been accounted for this task
+                attempt_statuses = (
+                    BudgetReservationStatus.ACTIVE,
+                    BudgetReservationStatus.RECONCILED,
+                    BudgetReservationStatus.EXPIRED,
+                )
+                stmt = select(func.count(BudgetReservation.id)).where(
+                    BudgetReservation.budget_id == budget.id,
+                    BudgetReservation.task_id == task_id,
+                    BudgetReservation.status.in_(attempt_statuses),
+                )
+                attempts_used = (await session.scalar(stmt)) or 0
+
+                # Check attempt 0 reservation state if it exists
+                res_key_0 = f"task:{task_id}:attempt:0"
+                res_0 = await BudgetGovernor.get_reservation_by_key(session, budget.id, res_key_0)
+
+                # Separate reservation settlement from task completion (AUD-M2.2-02)
+                # A RECONCILED reservation alone NEVER establishes task completion.
+                # Valid completion requires:
+                # 1. Attempt succeeded at provider/verification level (res_0.metadata_json["success"] is True)
+                # 2. Output text is non-empty
+                # 3. All expected deliverables exist and are non-empty on disk
+                if res_0 is not None and res_0.status == BudgetReservationStatus.RECONCILED:
+                    attempt_success = res_0.metadata_json.get("success") is True
+                    output_text = res_0.metadata_json.get("output_text") or t.get("output_text", "")
+                    has_output = bool(output_text and str(output_text).strip())
+
+                    expected_artifacts = t.get("expected_output_artifacts", [])
+                    artifacts_present = True
+                    if expected_artifacts:
+                        for art_name in expected_artifacts:
+                            art_file = project_work_dir / art_name
+                            if not art_file.exists() or art_file.stat().st_size == 0:
+                                artifacts_present = False
+                                break
+
+                    if attempt_success and has_output and artifacts_present:
+                        logger.info(
+                            "Task %s completed and verified in prior run; adopting result",
+                            task_id,
+                        )
+                        t["status"] = "completed"
+                        t["output_text"] = output_text
+                        t["error_message"] = None
+                        continue
+                    else:
+                        logger.warning(
+                            "Task %s attempt 0 reconciled but incomplete/failed (success=%s, output=%s, artifacts=%s)",
+                            task_id,
+                            attempt_success,
+                            has_output,
+                            artifacts_present,
+                        )
+
+                # If attempts have already been used, determine if retries allow another attempt
+                agent_slug = t.get("assigned_agent_slug", "developer")
+                snapshots = state.get("agent_snapshots", {}) or {}
+                agent_info = snapshots.get(agent_slug) or AGENT_MAP.get(agent_slug, {})
+                exec_config = agent_info.get("execution_config", {})
+                max_retries = exec_config.get("max_retries", 1)
+                max_allowed_attempts = max_retries + 1
+
+                if attempts_used >= max_allowed_attempts:
+                    logger.warning(
+                        "Task %s retry limit exhausted across prior attempts (%d/%d)",
+                        task_id,
+                        attempts_used,
+                        max_allowed_attempts,
+                    )
+                    t["status"] = "failed"
+                    t["error_message"] = (
+                        f"Task failed: maximum attempts ({max_allowed_attempts}) exhausted"
+                    )
+                    failed_ids.append(task_id)
                     continue
+
+                attempt_to_reserve = attempts_used
+                res_key = f"task:{task_id}:attempt:{attempt_to_reserve}"
 
                 reservation = await BudgetGovernor.reserve(
                     session,
                     execution_id,
                     reservation_key=res_key,
-                    task_id=t["task_id"],
-                    agent_slug=t.get("assigned_agent_slug"),
-                    purpose="agent_dispatch",
-                    attempt_number=0,
+                    task_id=task_id,
+                    agent_slug=agent_slug,
+                    purpose="agent_dispatch" if attempt_to_reserve == 0 else "agent_retry",
+                    attempt_number=attempt_to_reserve,
                     timeout_seconds=_reservation_timeout_seconds(t, state),
                 )
-                reservations[t["task_id"]] = (reservation.id, reservation.fence_token)
+                reservations[task_id] = (reservation.id, reservation.fence_token)
                 tasks_to_dispatch.append(t)
             await session.commit()
     except BudgetExhaustedError as exc:
@@ -692,17 +771,18 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
     )
 
     usage_list = list(state.get("usage_records", []))
-    failed_ids = list(state.get("failed_task_ids", []))
-    any_failed = False
+    any_failed = bool(failed_ids)
     error_msg = None
 
-    for i, res in enumerate(results):
-        target_task = ready_tasks[i]
+    # AUD-M2.2-01: Explicit 1-to-1 task identity result pairing
+    for task_dispatched, res in zip(tasks_to_dispatch, results, strict=True):
+        task_id = task_dispatched["task_id"]
+        target_task = task_map.get(task_id, task_dispatched)
         if isinstance(res, Exception):
-            logger.error("Task %s raised unhandled exception: %s", target_task["task_id"], res)
+            logger.error("Task %s raised unhandled exception: %s", task_id, res)
             target_task["status"] = "failed"
             target_task["error_message"] = str(res)
-            failed_ids.append(target_task["task_id"])
+            failed_ids.append(task_id)
             any_failed = True
             error_msg = str(res)
         else:
@@ -710,7 +790,7 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
             target_task.update(updated_task)
             usage_list.extend(u_records)
             if target_task.get("status") == "failed":
-                failed_ids.append(target_task["task_id"])
+                failed_ids.append(task_id)
                 any_failed = True
                 error_msg = target_task.get("error_message", "Task failed")
 

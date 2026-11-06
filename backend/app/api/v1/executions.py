@@ -18,8 +18,13 @@ router = APIRouter(prefix="/executions", tags=["Executions"])
 async def create_execution(
     data: ExecutionCreate,
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> ExecutionRead:
     execution = await WorkflowService.create_execution(db, data)
+    await WorkflowService.record_event(
+        db, execution.id, "execution_created", {"created_by": operator.actor_id}
+    )
+    await db.commit()
     return ExecutionRead.model_validate(execution)
 
 
@@ -51,6 +56,7 @@ async def get_execution(
 async def pause_execution(
     execution_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> ExecutionRead:
     execution = await WorkflowService.update_execution_status(
         db, execution_id, ExecutionStatus.PAUSED
@@ -58,8 +64,12 @@ async def pause_execution(
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
     await WorkflowService.record_event(
-        db, execution_id, "execution_paused", {"reason": "Manual operator pause"}
+        db,
+        execution_id,
+        "execution_paused",
+        {"reason": "Manual operator pause", "actor_id": operator.actor_id},
     )
+    await db.commit()
     return ExecutionRead.model_validate(execution)
 
 
@@ -67,6 +77,7 @@ async def pause_execution(
 async def resume_execution(
     execution_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> ExecutionRead:
     execution = await WorkflowService.update_execution_status(
         db, execution_id, ExecutionStatus.RUNNING
@@ -74,8 +85,12 @@ async def resume_execution(
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
     await WorkflowService.record_event(
-        db, execution_id, "execution_resumed", {"reason": "Manual operator resume"}
+        db,
+        execution_id,
+        "execution_resumed",
+        {"reason": "Manual operator resume", "actor_id": operator.actor_id},
     )
+    await db.commit()
     return ExecutionRead.model_validate(execution)
 
 

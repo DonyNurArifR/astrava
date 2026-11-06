@@ -107,13 +107,22 @@ async def _reserve(execution_id: uuid.UUID, key: str, **kwargs) -> uuid.UUID:
 
 async def _reconcile(reservation_id: uuid.UUID, **kwargs) -> None:
     async with AsyncSessionLocal() as db:
+        if "fence_token" not in kwargs:
+            res = await db.get(BudgetReservation, reservation_id)
+            if res:
+                kwargs["fence_token"] = res.fence_token
         await BudgetGovernor.reconcile(db, reservation_id, **kwargs)
         await db.commit()
 
 
-async def _release(reservation_id: uuid.UUID) -> None:
+async def _release(reservation_id: uuid.UUID, fence_token: str | None = None) -> None:
     async with AsyncSessionLocal() as db:
-        await BudgetGovernor.release(db, reservation_id)
+        if fence_token is None:
+            res = await db.get(BudgetReservation, reservation_id)
+            if res:
+                fence_token = res.fence_token
+        assert fence_token is not None
+        await BudgetGovernor.release(db, reservation_id, fence_token=fence_token)
         await db.commit()
 
 

@@ -123,5 +123,17 @@
   6. *Idempotent Resumption Recovery (F-06):* Inspect settled reservation state during worker restart. If attempt 0 was already reconciled prior to an abrupt crash, cleanly adopt the completed task output without raising unhandled reservation errors.
 - **Consequences:** Eliminates unauthorized or unlogged budget inflation; guarantees bounded resource consumption across retries; ensures accurate financial accounting when provider metrics fluctuate; prevents distributed concurrency corruption from stale workers; provides crash-resilient execution resumption.
 
+## ADR-016: Workflow Recovery & Endpoint Security Hardening (M1.4-2.2.2)
+- **Status:** Accepted
+- **Context:** The M1.4-2.2.1 independent acceptance audit identified operational and security vulnerabilities in workflow recovery and API mutations: AUD-M2.2-01 (partial-wave task index misalignment when pre-completed tasks exist), AUD-M2.2-02 (reservation reconciliation conflated with task completion on restart), AUD-M2.2-03 (optional fencing token parameter allowing unauthenticated settlement bypasses), and AUD-M2.2-04 (unauthenticated execution lifecycle endpoints: `/executions`, `/pause`, `/resume`).
+- **Decision:**
+  1. *Explicit 1-to-1 Task Identity Pairing (AUD-M2.2-01):* Replace positional index mapping (`results[i]`) with `zip(tasks_to_dispatch, results, strict=True)`. Map each result directly to its originating task identity via `task_map.get(task_id, task_dispatched)` to guarantee correctness in partial waves.
+  2. *Decoupled Settlement & Verified Task Completion (AUD-M2.2-02):* Enforce that a `RECONCILED` reservation alone never establishes task completion. Resumed workflows must verify provider attempt success (`res_0.metadata_json["success"] is True`), presence of non-empty deliverables, and physical existence of expected artifact files on disk. Failed previous attempts are recognized, increment attempt counters, and permit dynamic retry reservation (`attempt:N`) if limits allow.
+  3. *Mandatory Cryptographic Fencing Tokens (AUD-M2.2-03):* Enforce `fence_token: str` as a non-optional parameter across `BudgetGovernor.reconcile()` and `BudgetGovernor.release()`, raising `FencingTokenMismatchError` on any missing or mismatched token.
+  4. *Execution Mutation Endpoint Authentication (AUD-M2.2-04):* Protect `POST /api/v1/executions`, `POST /api/v1/executions/{id}/pause`, and `POST /api/v1/executions/{id}/resume` with `OperatorContext = Depends(require_authorized_verifier)`. Record authenticated `actor_id` in execution telemetry events.
+  5. *Multi-Process Crash Recovery Verification:* Verify true multi-process crash durability via OS subprocesses and `SIGKILL`, proving that resuming orchestrator processes successfully reclaim expired leases from killed workers and proceed to completion.
+- **Consequences:** Eliminates state corruption during partial-wave dispatches; prevents incomplete or failed tasks from masquerading as completed during recovery; guarantees cryptographic fencing across all reservation lifecycles; seals unauthenticated execution mutation attack vectors; ensures verified fault tolerance across process boundaries.
+
+
 
 

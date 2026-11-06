@@ -374,6 +374,34 @@ In milestone M1.4-2.2, execution budget governance was systematically hardened a
   - Resumed workflows after a mid-execution crash inspect settled reservation state via `BudgetGovernor.get_reservation_by_key()`.
   - If a task attempt was already reconciled on a prior run that crashed before checkpointing, the resumed workflow cleanly adopts the completed task instead of re-dispatching or raising unhandled reservation errors.
 
+### 8.5 Workflow Recovery & Endpoint Security Hardening (M1.4-2.2.2)
+In milestone M1.4-2.2.2, workflow recovery mechanics and execution endpoint security were hardened following the M1.4-2.2.1 independent acceptance audit findings (AUD-M2.2-01 through AUD-M2.2-04):
+
+- **8.5.1 Explicit 1-to-1 Task Identity Pairing (AUD-M2.2-01):**
+  - Eliminated dangerous positional index slicing (`results[i]`) across partial wave dispatches where pre-completed or filtered tasks caused result index misalignment.
+  - Implemented explicit 1-to-1 task-to-result mapping: `for task_dispatched, res in zip(tasks_to_dispatch, results, strict=True): target_task = task_map.get(task_id, task_dispatched)`.
+  - Guarantees that task execution outcomes and usage records strictly bind to their intended task identity regardless of wave subset size or out-of-order execution.
+
+- **8.5.2 Decoupled Reservation Settlement from Verified Task Completion (AUD-M2.2-02):**
+  - Enforced the architectural invariant: a `RECONCILED` reservation $\neq$ task completion.
+  - Reconciled reservations record attempt telemetry evidence in `reservation.metadata_json` (`success`, `provider_status`, `exit_code`, `has_output`, `output_text`).
+  - Resumed workflows inspect candidate tasks to verify provider attempt success (`res_0.metadata_json["success"] is True`), presence of non-empty deliverables, and physical existence of expected artifact files on disk before marking tasks completed.
+  - Failed prior attempts increment attempt counters without prematurely concluding tasks, dynamically reserving subsequent attempts (`attempt:N`) if retry limits permit, or marking tasks failed when retries are exhausted.
+
+- **8.5.3 Non-Optional Cryptographic Fencing Token Enforcement (AUD-M2.2-03):**
+  - Refactored `BudgetGovernor.reconcile()` and `BudgetGovernor.release()` to make `fence_token: str` strictly mandatory (non-optional).
+  - Eliminated silent `None` bypasses across internal locking (`_lock_active_reservation`); missing or mismatched tokens immediately raise `FencingTokenMismatchError`.
+  - Prevents zombie or superseded worker processes from modifying budget counters under any code path.
+
+- **8.5.4 Operator Authentication & Telemetry Attribution on Execution Mutation Endpoints (AUD-M2.2-04):**
+  - Protected all execution mutation endpoints (`POST /api/v1/executions`, `POST /api/v1/executions/{id}/pause`, `POST /api/v1/executions/{id}/resume`) with `OperatorContext = Depends(require_authorized_verifier)`.
+  - Rejects unauthenticated requests with HTTP 401 Unauthorized when `OPERATOR_API_KEY` is configured.
+  - Recorded authenticated operator identity (`actor_id`) directly into execution telemetry events (`pipeline_created`, `pipeline_paused`, `pipeline_resumed`), ensuring end-to-end operational traceability.
+
+- **8.5.5 Multi-Process Orchestrator Crash Recovery & Zombie Lease Reclamation:**
+  - Validated resilience under true OS-level multi-process execution crashes using `multiprocessing.Process` and real `SIGKILL`.
+  - Resuming processes automatically reclaim expired reservation leases held by terminated zombie processes via `_reclaim_expired()`, cleanly resetting active reservation counters and enabling pipeline continuation without manual intervention.
+
 
 
 
