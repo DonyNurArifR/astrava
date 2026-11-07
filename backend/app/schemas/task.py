@@ -37,6 +37,7 @@ class TaskUpdate(BaseModel):
     status: TaskStatus | None = None
     output_data: dict[str, Any] | None = None
     error_details: str | None = None
+    remediation_history_json: list[dict[str, Any]] | None = None
 
     @field_validator("title")
     @classmethod
@@ -55,7 +56,13 @@ class TaskRead(TaskBase):
     status: TaskStatus
     output_data: dict[str, Any]
     error_details: str | None = None
+    remediation_history_json: list[dict[str, Any]] = []
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("remediation_history_json", mode="before")
+    @classmethod
+    def default_remediation_history(cls, v: Any) -> list[dict[str, Any]]:
+        return v if v is not None else []
 
     model_config = ConfigDict(from_attributes=True)

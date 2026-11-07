@@ -133,6 +133,11 @@ export const ExecutionsPage: React.FC = () => {
                     >
                       {e.status}
                     </span>
+                    {Boolean(e.remediation_count && e.remediation_count > 0) && (
+                      <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                        {e.remediation_count} {e.remediation_count === 1 ? 'remediation' : 'remediations'}
+                      </span>
+                    )}
                   </td>
                   <td className="py-3.5 px-4 font-semibold text-slate-700 dark:text-slate-300">
                     Step {e.current_step}
@@ -201,7 +206,7 @@ export const ExecutionsPage: React.FC = () => {
             </div>
 
             <div className="overflow-y-auto space-y-4 pr-1 text-xs">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-200 dark:border-slate-800">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-200 dark:border-slate-800">
                 <div>
                   <span className="text-slate-400 block">Status</span>
                   <span className="font-bold uppercase text-slate-900 dark:text-white">
@@ -212,6 +217,12 @@ export const ExecutionsPage: React.FC = () => {
                   <span className="text-slate-400 block">Current Step</span>
                   <span className="font-bold text-slate-900 dark:text-white">
                     Step {selectedExecution.current_step}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Remediations</span>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {selectedExecution.remediation_count || 0}
                   </span>
                 </div>
                 <div>
@@ -239,6 +250,40 @@ export const ExecutionsPage: React.FC = () => {
                 executionId={selectedExecution.id}
                 refreshKey={`${selectedExecution.status}|${selectedExecution.updated_at}`}
               />
+
+              {/* Automated Remediation History (M1.4-3) */}
+              {Boolean(selectedExecution.state_data?.remediation_records?.length) && (
+                <div className="space-y-2 bg-amber-500/5 border border-amber-500/20 p-3 rounded-lg">
+                  <h4 className="font-bold uppercase text-[10px] tracking-wider text-amber-600 dark:text-amber-400">
+                    Automated Remediation Turns ({selectedExecution.state_data.remediation_records.length})
+                  </h4>
+                  <div className="space-y-2">
+                    {selectedExecution.state_data.remediation_records.map((rec: any, idx: number) => (
+                      <div key={idx} className="p-2 bg-white dark:bg-slate-900 rounded border border-amber-500/20 text-slate-700 dark:text-slate-300 space-y-1">
+                        <div className="flex items-center justify-between font-mono text-[10px]">
+                          <span className="font-bold text-amber-600 dark:text-amber-400">Cycle {rec.cycle} - Task: {rec.task_id}</span>
+                          <span className="text-slate-400">{rec.timestamp ? new Date(rec.timestamp).toLocaleTimeString() : ''}</span>
+                        </div>
+                        {rec.diagnostics && (
+                          <div className="font-mono text-[10px] text-red-600 dark:text-red-400 whitespace-pre-wrap bg-slate-50 dark:bg-slate-950 p-1.5 rounded">
+                            {rec.diagnostics}
+                          </div>
+                        )}
+                        {rec.unmet_criteria?.length > 0 && (
+                          <div className="text-[10px]">
+                            <span className="font-semibold text-slate-500">Unmet Criteria:</span>
+                            <ul className="list-disc list-inside">
+                              {rec.unmet_criteria.map((c: string, ci: number) => (
+                                <li key={ci}>{c}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Multi-Agent DAG Tasks & Lifecycle */}
               {selectedExecution.state_data?.tasks && (

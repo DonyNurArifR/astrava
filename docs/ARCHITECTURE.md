@@ -402,6 +402,62 @@ In milestone M1.4-2.2.2, workflow recovery mechanics and execution endpoint secu
   - Validated resilience under true OS-level multi-process execution crashes using `multiprocessing.Process` and real `SIGKILL`.
   - Resuming processes automatically reclaim expired reservation leases held by terminated zombie processes via `_reclaim_expired()`, cleanly resetting active reservation counters and enabling pipeline continuation without manual intervention.
 
+---
+
+## 9. V1.4 Semantic Evaluator & Automated Remediation Loop (M1.4-3)
+
+### 9.1 Two-Tier Verification & Evaluation Architecture
+To eliminate blind retries and achieve autonomous self-correction (V1.4 TR-06), ASTRAVA introduces a two-tier evaluation framework:
+
+- **Tier 1: Deterministic Verification Engine (`VerificationEngine`):**
+  - Executes automated local validation checks: Python syntax compilation via `py_compile`, automated test suite execution via `pytest`, and strict JSON artifact validation.
+  - Extracts structured diagnostics (`StructuredDiagnostic`) containing `file_path`, `line_number`, `error_type` (syntax, test_failure, lint, schema), and `summary`.
+  - Limits compiler and diagnostic summaries to a strict ceiling ($\le 2,500$ characters) to avoid prompt bloat.
+
+- **Tier 2: Semantic Evaluator (`SemanticEvaluator`):**
+  - Compares deliverable content against the task's declared `acceptance_criteria` and output requirements using Claude Haiku 5.5 (`SemanticEvaluationProvider`).
+  - Strict JSON evaluation protocol: computes a `compliance_score` between 0.0 and 1.0, enumerates any `unmet_criteria`, provides objective `reasoning`, and outlines actionable `suggestions` for remediation.
+  - Tasks without explicit acceptance criteria pass Tier 2 evaluation by default with a compliance score of 1.0.
+
+### 9.2 Closed-Loop Remediation Graph Node (`remediation_node`)
+The LangGraph workflow state machine integrates automated remediation between verification and dispatch:
+- **Conditional Edge Routing:**
+  - `route_after_verify` inspects `state["remediation_needed"]`. If any task in the batch failed verification and has remaining remediation cycles, the workflow routes to `remediation`. Otherwise, it proceeds to `artifact`.
+  - `route_after_remediation` routes back to `dispatch_task` to execute the self-correction attempt, or terminates cleanly to `END` if the budget is exhausted.
+- **Diagnostic Feedback Injection:**
+  - `remediation_node` constructs a high-priority diagnostic prompt header:
+    ```markdown
+    =================== REMEDIATION REQUIRED (Cycle N/3) ===================
+    Your previous deliverable failed verification. Correct the following issues:
+    ### Verification Diagnostics:
+    - [SYNTAX] at src/module.py:42: invalid syntax
+    ### Unmet Acceptance Criteria:
+    1. ...
+    ### Suggestions:
+    - ...
+    ========================================================================
+    ```
+  - Appends the diagnostic context directly to the task description and sets task status back to `pending`.
+  - Tracks complete cycle records in `task["remediation_history_json"]` and emits `task_remediation_cycle` events to execution telemetry.
+
+### 9.3 Remediation Loop Termination & Budget Integration
+- **Strict 3-Cycle Remediation Cap:**
+  - Tasks are bounded to a maximum of 3 remediation cycles (`remediation_cycles < 3`).
+  - Upon exceeding 3 cycles without passing verification, the task is permanently marked `failed`, `remediation_needed` is set to `False`, and the workflow cleanly transitions to `artifact` -> `END` without infinite looping.
+- **Centralized Budget Integration:**
+  - Every remediation cycle invokes `BudgetGovernor.record_remediation_turn(db, execution_id)`.
+  - Counts turns against the execution's `max_remediation_turns` limit.
+  - If the remediation turn budget is exhausted, the governor transitions `ExecutionBudget.status` to `EXHAUSTED` and raises `BudgetExhaustedError`, halting further dispatches while preserving all prior work and artifacts.
+
+### 9.4 Relational Persistence & Observability
+- **Database Schema Migration (`4566f72d5e69`):**
+  - Added `tasks.remediation_history_json` (`JSON`, default `'[]'::json`) tracking structured cycle history.
+  - Added `workflow_executions.remediation_count` (`Integer`, default 0) recording total remediation turns per execution.
+- **REST API:**
+  - `GET /api/v1/executions/{execution_id}/remediations`: Returns `RemediationSummaryResponse` detailing total remediations, affected tasks, and complete cycle-by-cycle diagnostic records.
+- **Frontend Observability:**
+  - `ExecutionsPage.tsx` displays remediation status badges with cycle counts and provides an interactive remediation inspector drawer showing diagnostics, unmet criteria, and suggestions.
+
 
 
 

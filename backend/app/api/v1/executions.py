@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.models.execution import ExecutionStatus
 from app.schemas.budget import BudgetLimitsUpdate, BudgetSummaryResponse
 from app.schemas.execution import ExecutionCreate, ExecutionRead
+from app.schemas.remediation import RemediationSummaryResponse
 from app.services.budget_governor import BudgetGovernor, BudgetGovernorError
 from app.services.workflow_service import WorkflowService
 
@@ -150,3 +151,25 @@ async def increase_execution_budget(
 
     summary = await BudgetGovernor.get_summary(db, execution_id)
     return BudgetSummaryResponse(**summary)
+
+
+@router.get("/{execution_id}/remediations", response_model=RemediationSummaryResponse)
+async def get_execution_remediations(
+    execution_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> RemediationSummaryResponse:
+    execution = await WorkflowService.get_execution(db, execution_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    events = await WorkflowService.list_events(db, execution_id)
+    remediation_events = [e for e in events if e.event_type == "task_remediation_cycle"]
+    cycles = [e.payload for e in remediation_events]
+    tasks_affected = list({c.get("task_id") for c in cycles if c.get("task_id")})
+
+    return RemediationSummaryResponse(
+        execution_id=execution_id,
+        total_remediations=execution.remediation_count or len(cycles),
+        tasks_affected=tasks_affected,
+        cycles=cycles,
+    )

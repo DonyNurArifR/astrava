@@ -16,10 +16,21 @@ class CheckResult(BaseModel):
     error: str = ""
 
 
+class StructuredDiagnostic(BaseModel):
+    check_name: str
+    error_type: str  # "syntax", "test_failure", "json_malformed", "timeout", "general"
+    summary: str
+    details: str = ""
+    file_path: str | None = None
+    line_number: int | None = None
+
+
 class VerificationReport(BaseModel):
     overall_passed: bool
     total_duration_ms: int
     checks: list[CheckResult] = Field(default_factory=list)
+    diagnostics: list[StructuredDiagnostic] = Field(default_factory=list)
+    diagnostic_summary: str = ""
     git_diff: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -157,7 +168,52 @@ class VerificationEngine:
         # 4. Collect Git diff
         git_diff = await cls.collect_git_diff(working_directory)
 
-        # 5. Overall pass evaluation
+        # 5. Extract structured diagnostics for automated remediation (M1.4-3)
+        diagnostics: list[StructuredDiagnostic] = []
+        diag_lines: list[str] = []
+
+        import re
+
+        for c in checks:
+            if not c.passed:
+                raw_err = (c.error or c.output or "").strip()
+                err_type = "general"
+                file_path = None
+                line_no = None
+
+                if "syntax" in c.name.lower() or "py_compile" in c.name.lower():
+                    err_type = "syntax"
+                    match = re.search(r'File "([^"]+)", line (\d+)', raw_err)
+                    if match:
+                        file_path = match.group(1)
+                        line_no = int(match.group(2))
+                elif "test" in c.name.lower() or "pytest" in c.name.lower():
+                    err_type = "test_failure"
+                elif "json" in c.name.lower():
+                    err_type = "json_malformed"
+
+                summary = raw_err.split("\n")[-1] if raw_err else f"{c.name} failed"
+                if len(summary) > 200:
+                    summary = summary[:197] + "..."
+
+                diag = StructuredDiagnostic(
+                    check_name=c.name,
+                    error_type=err_type,
+                    summary=summary,
+                    details=raw_err[:1500],
+                    file_path=file_path,
+                    line_number=line_no,
+                )
+                diagnostics.append(diag)
+                loc_str = f" at {file_path}:{line_no}" if file_path and line_no else ""
+                diag_lines.append(f"- [{err_type.upper()}]{loc_str} {c.name}: {summary}")
+                if raw_err:
+                    snippet = raw_err[:400].strip()
+                    diag_lines.append(f"  Details: {snippet}")
+
+        diagnostic_summary = "\n".join(diag_lines)[:2500]
+
+        # 6. Overall pass evaluation
         overall_passed = all(c.passed for c in checks) if checks else True
         total_duration = int((time.monotonic() - start) * 1000)
 
@@ -165,6 +221,8 @@ class VerificationEngine:
             overall_passed=overall_passed,
             total_duration_ms=total_duration,
             checks=checks,
+            diagnostics=diagnostics,
+            diagnostic_summary=diagnostic_summary,
             git_diff=git_diff,
             metadata={
                 "files_checked": len(py_files),

@@ -254,6 +254,7 @@ class OrchestrationRunner:
             if task_key in task_db_ids:
                 # Task already exists in DB; update status if completed or failed
                 existing_db_id = uuid.UUID(task_db_ids[task_key])
+                remed_hist = t.get("remediation_history_json")
                 if task_key in completed_ids:
                     await TaskService.update(
                         db,
@@ -261,6 +262,7 @@ class OrchestrationRunner:
                         TaskUpdate(
                             status=TaskStatus.COMPLETED,
                             output_data={"result": t.get("output_text", "")},
+                            remediation_history_json=remed_hist,
                         ),
                     )
                 elif (
@@ -274,6 +276,7 @@ class OrchestrationRunner:
                         TaskUpdate(
                             status=TaskStatus.FAILED,
                             error_details=t.get("error_message", "Task execution failed"),
+                            remediation_history_json=remed_hist,
                         ),
                     )
             else:

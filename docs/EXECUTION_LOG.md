@@ -704,6 +704,43 @@
   - Updated `docs/ROADMAP.md` and `docs/PROGRESS.md`.
   - Created and maintained `docs/AUTONOMOUS_EXECUTION_STATE.md`.
 
+## 2026-11-07 — V1.4-M3: Semantic Evaluator & Automated Remediation Loop
+- **Role Alignment:** Lead AI Architect & Development Orchestrator: Gemini. Implementation Engine: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Replace blind retries with closed-loop intelligent self-correction, feeding compiler, syntax, and acceptance criteria diagnostics back into agent prompts (M1.4-3 / TR-06).
+- **Core Architecture & Implementation:**
+  - **Database Schema Migration (`4566f72d5e69`):**
+    - Created and applied Alembic migration `4566f72d5e69_add_remediation_tracking_to_tasks_and_.py`.
+    - Added `remediation_history_json` to `tasks` (default `'[]'::json`).
+    - Added `remediation_count` to `workflow_executions` (default 0).
+  - **Tier 1 Structured Diagnostics (`backend/app/verification/engine.py`):**
+    - Enhanced `VerificationEngine.verify_task` to extract `StructuredDiagnostic` entries (file path, line number, error type, and summary).
+    - Structured summary strictly bounded to $\le 2500$ characters to protect prompt capacity.
+  - **Tier 2 Semantic Evaluator (`backend/app/verification/semantic_evaluator.py`):**
+    - Built `SemanticEvaluator.evaluate()` and dedicated `SemanticEvaluationProvider`.
+    - Objective JSON compliance evaluation against task `acceptance_criteria` using Claude Haiku 5.5.
+    - Computes compliance score (0.0 to 1.0), lists unmet criteria, and provides remediation suggestions.
+  - **Closed-Loop LangGraph Remediation Node (`backend/app/orchestrator/workflow_graph.py`):**
+    - Added `remediation_node` to state graph with conditional edge routing: `verify` -> `route_after_verify` (`remediation` or `artifact`); `remediation` -> `route_after_remediation` (`dispatch_task` or `END`).
+    - Formats high-priority diagnostic prompt header (`REMEDIATION REQUIRED (Cycle N/3)`).
+    - Strict 3-cycle cap per task halting non-recoverable tasks from infinite looping.
+  - **Centralized Budget Governance Integration (`backend/app/services/budget_governor.py`):**
+    - Added `BudgetGovernor.record_remediation_turn(db, execution_id)` tracking turns against `max_remediation_turns`.
+    - Reaching limit transitions budget to `EXHAUSTED` and raises `BudgetExhaustedError`, halting dispatches without corruption.
+  - **REST API & Frontend Observability:**
+    - Added `GET /api/v1/executions/{execution_id}/remediations` endpoint returning `RemediationSummaryResponse`.
+    - Updated `ExecutionsPage.tsx` with remediation badges and interactive cycle inspector drawer.
+- **Verification & Acceptance:**
+  - Created `backend/tests/test_v1_4_automated_remediation.py` with 7 comprehensive test cases (7/7 passed).
+  - Full backend pytest suite: **168/168 tests passed** in 29.12s.
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 98 backend files.
+  - Frontend Vitest suite: 9/9 test files (16 tests) passed in 1.46s; Vite build clean in 199ms.
+  - Alembic migration head: `4566f72d5e69` (clean, verified).
+- **Documentation & Tracking:**
+  - Added ADR-018 in `docs/DECISIONS.md`.
+  - Updated Section 9 in `docs/ARCHITECTURE.md`.
+  - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.
+
+
 
 
 

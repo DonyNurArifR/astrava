@@ -107,4 +107,12 @@
 | V1.4-M2.2.3-T3 | V1.4 | Mutation API Endpoint Authentication (AUD-M2.2.2-03) | COMPLETE | `backend/app/api/v1/approvals.py`, `backend/app/api/v1/memories.py` | Protected `POST /approvals/{id}/decide`, `POST /memories`, `PATCH /memories/{id}`, `/archive`, `/restore`, `/resolve` with `require_authorized_verifier` |
 | V1.4-M2.2.3-T4 | V1.4 | Cleanups & Token Documentation (AUD-M2.2.2-04/05) | COMPLETE | `backend/app/services/budget_governor.py`, `docs/ARCHITECTURE.md` | Removed duplicate flush in `BudgetGovernor.release()`; corrected fencing token documentation to 32 hex chars |
 | V1.4-M2.2.3-T5 | V1.4 | Closure Regression & Acceptance Test Suite | COMPLETE | `backend/tests/test_v1_4_workflow_recovery.py` | 13/13 recovery tests passing; full backend suite 161/161 passing; 16/16 frontend vitest passing |
+| V1.4-M3-T1 | V1.4 | Database Schema Migration (`4566f72d5e69`) | COMPLETE | `backend/alembic/versions/4566f72d5e69_...` | Added `tasks.remediation_history_json` and `workflow_executions.remediation_count`; verified upgrade/downgrade cleanly |
+| V1.4-M3-T2 | V1.4 | Tier 1 Deterministic Diagnostics Extraction | COMPLETE | `backend/app/verification/engine.py` | Structured diagnostics extraction (`StructuredDiagnostic`) with line numbers, error types, and summary bounded $\le 2500$ chars |
+| V1.4-M3-T3 | V1.4 | Tier 2 Semantic Evaluator (`SemanticEvaluator`) | COMPLETE | `backend/app/verification/semantic_evaluator.py` | Claude Haiku 5.5 evaluation against task `acceptance_criteria`; compliance scoring (0.0-1.0) and unmet criteria gap analysis |
+| V1.4-M3-T4 | V1.4 | Closed-Loop `remediation_node` & Graph Integration | COMPLETE | `backend/app/orchestrator/workflow_graph.py` | LangGraph conditional edge routing, diagnostic prompt formatting (`REMEDIATION REQUIRED`), 3-cycle cap per task, loop termination |
+| V1.4-M3-T5 | V1.4 | Budget Governor Remediation Turn Integration | COMPLETE | `backend/app/services/budget_governor.py` | `record_remediation_turn()` tracking against `max_remediation_turns`; halts pipeline on exhaustion with `EXHAUSTED` status |
+| V1.4-M3-T6 | V1.4 | Remediation REST API & Frontend Inspector | COMPLETE | `app/api/v1/executions.py`, `ExecutionsPage.tsx` | `GET /executions/{id}/remediations` endpoint, interactive drawer with diagnostic review, 16/16 vitest passing, clean build |
+| V1.4-M3-T7 | V1.4 | Full Remediation & Regression Test Suite | COMPLETE | `test_v1_4_automated_remediation.py`, `tests/` | 7/7 remediation tests passing; full backend suite 168/168 passing in 29.12s; 0 ruff errors |
+
 

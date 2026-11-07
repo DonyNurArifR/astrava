@@ -134,15 +134,17 @@
   5. *Multi-Process Crash Recovery Verification:* Verify true multi-process crash durability via OS subprocesses and `SIGKILL`, proving that resuming orchestrator processes successfully reclaim expired leases from killed workers and proceed to completion.
 - **Consequences:** Eliminates state corruption during partial-wave dispatches; prevents incomplete or failed tasks from masquerading as completed during recovery; guarantees cryptographic fencing across all reservation lifecycles; seals unauthenticated execution mutation attack vectors; ensures verified fault tolerance across process boundaries.
 
-## ADR-017: Recovery & Mutation Security Closure (M1.4-2.2.3)
+## ADR-018: Two-Tier Semantic Evaluation & Closed-Loop Automated Remediation (M1.4-3)
 - **Status:** Accepted
-- **Context:** The M1.4-2.2.2 independent acceptance audit identified remaining edge cases: AUD-M2.2.2-01 (resumed execution only checked `attempt:0`, causing retried tasks that succeeded before a crash to fail with false retry exhaustion), AUD-M2.2.2-02 (artifact presence checks lacked recency validation), and AUD-M2.2.2-03 (approval decisions and memory mutations lacked API key enforcement when configured).
+- **Context:** Blind retries in autonomous agent execution waste budget and fail to resolve root causes such as code syntax errors, unmet acceptance criteria, or malformed artifacts. Prior versions lacked a closed-loop feedback mechanism to inject verification diagnostics back into agent prompts.
 - **Decision:**
-  1. *Retry-Aware Recovery (AUD-M2.2.2-01):* In `dispatch_task_node`, query all reconciled reservations for the task ordered by `attempt_number.desc()`. Iterate through reconciled attempts to adopt the latest successful attempt. Ensure tasks that succeeded on retries (`attempt > 0`) before a crash are correctly adopted as completed.
-  2. *Artifact Ownership & Recency Verification (AUD-M2.2.2-02):* When checking deliverable presence on disk during recovery, verify that the artifact file's modification time corresponds to the reservation's creation (`st_mtime >= res_created_ts - 5.0`), rejecting stale artifacts leftover from past executions.
-  3. *Comprehensive Mutation Endpoint Security (AUD-M2.2.2-03):* Enforce `operator: OperatorContext = Depends(require_authorized_verifier)` across all remaining state-changing endpoints: approval decisions (`POST /approvals/{id}/decide`) and memory mutations (`POST /memories`, `PATCH /memories/{id}`, `/archive`, `/restore`, `/resolve`).
-  4. *Cleanups (AUD-M2.2.2-04/05):* Removed redundant `flush()` in `BudgetGovernor.release()`, and updated documentation to accurately reflect 32-hex character fencing tokens.
-- **Consequences:** True end-to-end resilience for retried tasks across crash boundaries; guarantees artifacts belong to the actual executing attempt; seals all administrative and data mutation API vectors; 100% clean test suite with 161 backend tests passing.
+  1. *Two-Tier Verification Architecture:* Tier 1 Deterministic Engine executes fast syntax compilation (`py_compile`), automated pytest runner, and JSON validation, extracting structured diagnostics (`StructuredDiagnostic` bounded to 2,500 characters). Tier 2 Semantic Evaluator (`SemanticEvaluator` / `SemanticEvaluationProvider`) evaluates deliverables against task-defined `acceptance_criteria` using Claude Haiku 5.5, computing compliance scores (0.0 - 1.0) and identifying unmet criteria.
+  2. *Closed-Loop Remediation Graph Node (`remediation_node`):* Added a dedicated LangGraph node between `verify` and `dispatch_task`. Formats structured diagnostics, compiler lines, and unmet criteria into a high-priority prompt section (`=================== REMEDIATION REQUIRED ===================`) and routes back to `dispatch_task`.
+  3. *Deterministic 3-Cycle Remediation Cap:* Strict bounding at 3 remediation cycles per task. Tasks failing verification after 3 cycles are permanently marked `failed` and halted from re-entering remediation, preventing infinite loops.
+  4. *Centralized Budget Governance Integration:* Added `BudgetGovernor.record_remediation_turn(db, execution_id)` tracking against `max_remediation_turns`. Reaching the limit transitions budget to `EXHAUSTED` and cleanly terminates the pipeline without corruption.
+  5. *Persistence & Audit Observability:* Added `remediation_history_json` to `tasks` table and `remediation_count` to `workflow_executions`. Exposed `GET /api/v1/executions/{id}/remediations` returning complete cycle history and diagnostics. Added frontend inspector badge and drawer in `ExecutionsPage.tsx`.
+- **Consequences:** Intelligently self-correcting agent pipelines; eliminate blind retries; deterministic cycle and budget bounding; comprehensive auditability across all self-correction attempts.
+
 
 
 

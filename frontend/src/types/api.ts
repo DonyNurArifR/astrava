@@ -51,6 +51,7 @@ export interface Execution {
   project_id: string;
   status: ExecutionStatus;
   current_step: number;
+  remediation_count?: number;
   state_data: Record<string, any>;
   checkpoint_id: string | null;
   started_at: string | null;
@@ -361,4 +362,20 @@ export interface PaginatedResponse<T> {
   page: number;
   page_size: number;
   total_pages: number;
+}
+
+export interface RemediationCycle {
+  cycle: number;
+  task_id: string;
+  diagnostics: string;
+  unmet_criteria: string[];
+  reasoning: string;
+  timestamp?: string;
+}
+
+export interface RemediationSummary {
+  execution_id: string;
+  total_remediations: number;
+  tasks_affected: string[];
+  cycles: RemediationCycle[];
 }

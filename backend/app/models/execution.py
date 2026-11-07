@@ -49,6 +49,7 @@ class WorkflowExecution(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
     current_step: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    remediation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     state_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     checkpoint_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

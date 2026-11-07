@@ -704,6 +704,29 @@ class BudgetGovernor:
         return budget
 
     @staticmethod
+    async def record_remediation_turn(db: AsyncSession, execution_id: uuid.UUID) -> ExecutionBudget:
+        """Count one remediation turn against ``max_remediation_turns`` (M1.4-3).
+
+        Raises:
+            BudgetExhaustedError: budget is EXHAUSTED/COMPLETED/CANCELLED or cap is reached.
+        """
+        budget = await _require_locked_budget(db, execution_id)
+        if budget.status in _BLOCKED_STATUSES:
+            raise BudgetExhaustedError(f"Budget is {budget.status}: {budget.exhaustion_reason}")
+        if (
+            budget.max_remediation_turns is not None
+            and budget.remediation_turns_count >= budget.max_remediation_turns
+        ):
+            budget.status = BudgetStatus.EXHAUSTED
+            budget.exhaustion_reason = f"Remediation turn limit reached ({budget.remediation_turns_count}/{budget.max_remediation_turns})"
+            await db.flush()
+            raise BudgetExhaustedError(budget.exhaustion_reason)
+        budget.remediation_turns_count += 1
+        _apply_thresholds(budget)
+        await db.flush()
+        return budget
+
+    @staticmethod
     async def increase_budget(
         db: AsyncSession,
         execution_id: uuid.UUID,

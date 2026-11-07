@@ -15,6 +15,7 @@ import type {
   Project,
   ProjectMemory,
   ProjectStats,
+  RemediationSummary,
   StructuredPlan,
   StudioType,
   Task,
@@ -90,6 +91,8 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(limits),
     }).then(r => handleResponse<BudgetSummary>(r)),
+  getExecutionRemediations: (executionId: string): Promise<RemediationSummary> =>
+    fetch(`${API_BASE}/executions/${executionId}/remediations`).then(r => handleResponse<RemediationSummary>(r)),
 
   // Approvals
   getApprovals: (pendingOnly = false) =>

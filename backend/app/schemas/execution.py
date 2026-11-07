@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.models.execution import ExecutionStatus
 
@@ -30,6 +30,7 @@ class ExecutionRead(ExecutionBase):
     id: uuid.UUID
     status: ExecutionStatus
     current_step: int
+    remediation_count: int = 0
     state_data: dict[str, Any]
     checkpoint_id: str | None = None
     started_at: datetime | None = None
@@ -38,5 +39,10 @@ class ExecutionRead(ExecutionBase):
     created_at: datetime
     updated_at: datetime
     events: list[ExecutionEventRead] = []
+
+    @field_validator("remediation_count", mode="before")
+    @classmethod
+    def default_remediation_count(cls, v: Any) -> int:
+        return v if v is not None else 0
 
     model_config = ConfigDict(from_attributes=True)

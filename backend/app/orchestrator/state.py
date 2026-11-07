@@ -37,3 +37,7 @@ class OrchestrationState(TypedDict, total=False):
     ingestion_status: str
     ingested_memory_ids: list[str]
     ingestion_errors: list[str]
+    # Automated Remediation (V1.4 M1.4-3)
+    remediation_needed: bool
+    remediation_task_ids: list[str]
+    remediation_records: list[dict[str, Any]]

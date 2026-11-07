@@ -99,6 +99,16 @@ class WorkflowService:
         return event
 
     @staticmethod
+    async def list_events(db: AsyncSession, execution_id: uuid.UUID) -> list[ExecutionEvent]:
+        stmt = (
+            select(ExecutionEvent)
+            .where(ExecutionEvent.execution_id == execution_id)
+            .order_by(ExecutionEvent.created_at.asc())
+        )
+        result = await db.scalars(stmt)
+        return list(result.all())
+
+    @staticmethod
     async def update_execution_status(
         db: AsyncSession,
         execution_id: uuid.UUID,

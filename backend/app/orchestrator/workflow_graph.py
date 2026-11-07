@@ -37,7 +37,9 @@ from app.services.budget_governor import (
 from app.services.memory_service import MemoryService
 from app.services.retrieval.schemas import RetrievalQuery
 from app.services.retrieval.service import RetrievalService
+from app.services.workflow_service import WorkflowService
 from app.verification.engine import VerificationEngine
+from app.verification.semantic_evaluator import SemanticEvaluator
 
 logger = logging.getLogger("astrava.orchestrator")
 
@@ -590,6 +592,7 @@ Produce the complete deliverable meeting all criteria directly."""
                         is_cost_estimated=resp.is_cost_estimated or actual_cost is None,
                         attempt_metadata={
                             "success": attempt_is_success,
+                            "remediation_cycle": task.get("remediation_cycles", 0),
                             "provider_status": resp.status.value,
                             "exit_code": resp.exit_code,
                             "has_output": bool(resp.output_text.strip()),
@@ -690,7 +693,13 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
                 # 2. Output text is non-empty
                 # 3. All expected deliverables exist, are non-empty, and belong to this attempt/execution (AUD-M2.2.2-02)
                 adopted_successful_attempt = None
+                current_remediation_cycle = t.get("remediation_cycles", 0)
                 for rec_res in reconciled_attempts:
+                    rec_cycle = rec_res.metadata_json.get("remediation_cycle", 0)
+                    if rec_cycle < current_remediation_cycle:
+                        # Attempt was settled during an earlier cycle that failed verification
+                        continue
+
                     attempt_success = rec_res.metadata_json.get("success") is True
                     output_text = rec_res.metadata_json.get("output_text") or t.get(
                         "output_text", ""
@@ -841,22 +850,189 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
 
 async def verify_node(state: OrchestrationState) -> dict[str, Any]:
     ready_ids = state.get("current_ready_task_ids", [])
+    tasks = state.get("tasks", [])
+    task_map = {t["task_id"]: t for t in tasks}
     project_id = state.get("project_id", "default")
     project_work_dir = (settings.ARTIFACT_STORAGE_PATH / project_id).resolve()
 
-    logger.info("Running deterministic verification for batch: %s", ready_ids)
+    logger.info("Running deterministic & semantic verification for batch: %s", ready_ids)
     report = await VerificationEngine.verify_task(project_work_dir)
 
     results = list(state.get("verification_results", []))
+    remediation_needed_tasks: list[dict[str, Any]] = []
+    failed_ids = list(state.get("failed_task_ids", []))
+
     for tid in ready_ids:
-        results.append(
-            {
-                "task_id": tid,
-                "report": report.model_dump(),
-            }
+        task = task_map.get(tid)
+        if not task:
+            continue
+
+        if task.get("status") != "completed":
+            failed_ids.append(tid)
+            continue
+
+        # Tier 2 Semantic Evaluation
+        acceptance_criteria = task.get("acceptance_criteria", [])
+        semantic_result = await SemanticEvaluator.evaluate(
+            deliverable_text=task.get("output_text", ""),
+            acceptance_criteria=acceptance_criteria,
+            task_title=task.get("title", ""),
+            task_description=task.get("description", ""),
         )
 
-    return {"verification_results": results}
+        task_passed = (
+            report.overall_passed
+            and semantic_result.passed
+            and task.get("status") == "completed"
+            and task.get("exit_code", 0) == 0
+        )
+
+        task_ver_record = {
+            "task_id": tid,
+            "report": report.model_dump(),
+            "semantic_evaluation": semantic_result.model_dump(),
+            "passed": task_passed,
+        }
+        results.append(task_ver_record)
+
+        if not task_passed:
+            current_cycle = task.get("remediation_cycles", 0)
+            if current_cycle < 3:
+                # Task is eligible for automated remediation
+                task["_remediation_meta"] = {
+                    "diagnostic_summary": report.diagnostic_summary
+                    or task.get("error_message")
+                    or "Task deliverable failed verification",
+                    "unmet_criteria": semantic_result.unmet_criteria,
+                    "reasoning": semantic_result.reasoning,
+                    "suggestions": semantic_result.suggestions,
+                }
+                remediation_needed_tasks.append(task)
+            else:
+                logger.warning("Task %s exceeded maximum remediation cycles (3)", tid)
+                task["status"] = "failed"
+                task["error_message"] = (
+                    f"Task exceeded maximum remediation cycles ({current_cycle}): "
+                    + (
+                        report.diagnostic_summary
+                        or task.get("error_message")
+                        or "Verification failed"
+                    )
+                )
+                failed_ids.append(tid)
+
+    remediation_needed = bool(remediation_needed_tasks)
+
+    return {
+        "tasks": tasks,
+        "verification_results": results,
+        "failed_task_ids": list(set(failed_ids)),
+        "remediation_needed": remediation_needed,
+        "remediation_task_ids": [t["task_id"] for t in remediation_needed_tasks],
+    }
+
+
+async def remediation_node(state: OrchestrationState) -> dict[str, Any]:
+    remediation_ids = state.get("remediation_task_ids", [])
+    tasks = state.get("tasks", [])
+    task_map = {t["task_id"]: t for t in tasks}
+    execution_id = uuid.UUID(state["execution_id"])
+    remediation_records = list(state.get("remediation_records", []))
+    failed_ids = list(state.get("failed_task_ids", []))
+    tasks_to_remediate: list[str] = []
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Count remediation turn against execution budget
+            await BudgetGovernor.record_remediation_turn(session, execution_id)
+            exec_row = await session.get(WorkflowExecution, execution_id)
+            if exec_row:
+                exec_row.remediation_count += 1
+            await session.commit()
+    except (BudgetExhaustedError, Exception) as exc:
+        logger.warning("Remediation turn halted by budget governor: %s", exc)
+        for tid in remediation_ids:
+            t = task_map.get(tid)
+            if t:
+                t["status"] = "failed"
+                t["error_message"] = f"Remediation halted: {exc}"
+                failed_ids.append(tid)
+        return {
+            "tasks": tasks,
+            "failed_task_ids": list(set(failed_ids)),
+            "remediation_needed": False,
+            "remediation_task_ids": [],
+            "status": "failed",
+            "budget_exhausted": True,
+        }
+
+    for tid in remediation_ids:
+        task = task_map.get(tid)
+        if not task:
+            continue
+
+        meta = task.pop("_remediation_meta", {})
+        cycle = task.get("remediation_cycles", 0) + 1
+        task["remediation_cycles"] = cycle
+
+        diag = meta.get("diagnostic_summary", "")
+        unmet = meta.get("unmet_criteria", [])
+        reasoning = meta.get("reasoning", "")
+        suggestions = meta.get("suggestions", [])
+
+        unmet_text = "\n".join(f"- {c}" for c in unmet) if unmet else "None"
+        sugg_text = "\n".join(f"- {s}" for s in suggestions) if suggestions else "None"
+
+        remediation_prompt = (
+            f"\n\n======================================================\n"
+            f"REMEDIATION REQUIRED (Cycle {cycle}/3)\n"
+            f"Your previous deliverable failed verification. Fix the following issues:\n\n"
+            f"### Diagnostics & Failures:\n{diag}\n\n"
+            f"### Unmet Acceptance Criteria:\n{unmet_text}\n\n"
+            f"### Suggestions:\n{sugg_text}\n"
+            f"======================================================\n"
+        )
+
+        original_prompt = task.get("original_description") or task.get("description", "")
+        task["original_description"] = original_prompt
+        task["description"] = original_prompt + remediation_prompt
+        # Reset task status to pending so it runs in dispatch_task
+        task["status"] = "pending"
+        task["error_message"] = None
+
+        history = list(task.get("remediation_history_json", []))
+        rec = {
+            "cycle": cycle,
+            "task_id": tid,
+            "diagnostics": diag,
+            "unmet_criteria": unmet,
+            "reasoning": reasoning,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        history.append(rec)
+        task["remediation_history_json"] = history
+        remediation_records.append(rec)
+        tasks_to_remediate.append(tid)
+
+        try:
+            async with AsyncSessionLocal() as session:
+                await WorkflowService.record_event(
+                    session,
+                    execution_id,
+                    "task_remediation_cycle",
+                    rec,
+                )
+                await session.commit()
+        except Exception:
+            pass
+
+    return {
+        "tasks": tasks,
+        "current_ready_task_ids": tasks_to_remediate,
+        "remediation_needed": False,
+        "remediation_task_ids": [],
+        "remediation_records": remediation_records,
+    }
 
 
 async def artifact_node(state: OrchestrationState) -> dict[str, Any]:
@@ -881,7 +1057,14 @@ async def artifact_node(state: OrchestrationState) -> dict[str, Any]:
         for filename in task.get("expected_output_artifacts", []):
             file_path = project_work_dir / filename
             if output_text and not file_path.exists():
-                file_path.write_text(output_text, encoding="utf-8")
+                if filename.endswith(".json"):
+                    try:
+                        json.loads(output_text)
+                        file_path.write_text(output_text, encoding="utf-8")
+                    except Exception:
+                        file_path.write_text(json.dumps({"content": output_text}), encoding="utf-8")
+                else:
+                    file_path.write_text(output_text, encoding="utf-8")
 
             artifacts.append(
                 {
@@ -1221,6 +1404,18 @@ def route_after_dispatch(state: OrchestrationState) -> Literal["verify", "__end_
     return "verify"
 
 
+def route_after_verify(state: OrchestrationState) -> Literal["remediation", "artifact"]:
+    if state.get("remediation_needed"):
+        return "remediation"
+    return "artifact"
+
+
+def route_after_remediation(state: OrchestrationState) -> Literal["dispatch_task", "__end__"]:
+    if state.get("budget_exhausted") or state.get("status") == "failed":
+        return "__end__"
+    return "dispatch_task"
+
+
 def route_after_artifact(
     state: OrchestrationState,
 ) -> Literal["approval_check", "ingest_knowledge", "__end__"]:
@@ -1245,6 +1440,7 @@ def build_orchestrator_graph():
     workflow.add_node("approval_check", approval_check_node)
     workflow.add_node("dispatch_task", dispatch_task_node)
     workflow.add_node("verify", verify_node)
+    workflow.add_node("remediation", remediation_node)
     workflow.add_node("artifact", artifact_node)
     workflow.add_node("ingest_knowledge", ingest_knowledge_node)
     workflow.add_node("complete", complete_node)
@@ -1270,7 +1466,24 @@ def build_orchestrator_graph():
             "__end__": END,
         },
     )
-    workflow.add_edge("verify", "artifact")
+
+    workflow.add_conditional_edges(
+        "verify",
+        route_after_verify,
+        {
+            "remediation": "remediation",
+            "artifact": "artifact",
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "remediation",
+        route_after_remediation,
+        {
+            "dispatch_task": "dispatch_task",
+            "__end__": END,
+        },
+    )
 
     workflow.add_conditional_edges(
         "artifact",

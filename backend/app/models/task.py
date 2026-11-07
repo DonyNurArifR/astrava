@@ -71,6 +71,9 @@ class Task(Base, UUIDMixin, TimestampMixin):
     input_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     output_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     error_details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    remediation_history_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
 
     # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="tasks")
