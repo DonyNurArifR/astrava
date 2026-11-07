@@ -25,6 +25,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from app.config import settings
 from app.db.session import AsyncSessionLocal
 from app.main import app
 from app.models.execution import ExecutionStatus, WorkflowExecution
@@ -138,7 +139,7 @@ class E2EMockProvider(BaseProvider):
 
 
 @pytest.mark.asyncio
-async def test_v1_4_full_autonomous_mission_lifecycle():
+async def test_v1_4_full_autonomous_mission_lifecycle(monkeypatch):
     """End-to-End Proof of V1.4 Autonomous Intelligence:
 
     1. Git repo + Project with repo_path + Codebase scanning
@@ -152,7 +153,10 @@ async def test_v1_4_full_autonomous_mission_lifecycle():
     9. Goal progress updated to 100% achieved.
     """
     with tempfile.TemporaryDirectory() as temp_dir:
-        repo_dir = Path(temp_dir) / "target_repo"
+        # Explicit containment settings (M1.5-1b): repo under <tmp>/repos, worktrees outside it.
+        monkeypatch.setattr(settings, "ALLOWED_REPO_ROOTS", [Path(temp_dir) / "repos"])
+        monkeypatch.setattr(settings, "WORKTREE_STORAGE_PATH", Path(temp_dir) / "worktrees")
+        repo_dir = Path(temp_dir) / "repos" / "target_repo"
         _init_git_repo(repo_dir)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

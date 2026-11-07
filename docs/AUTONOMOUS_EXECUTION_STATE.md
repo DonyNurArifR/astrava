@@ -2,13 +2,13 @@
 
 ## Baseline & Execution Context
 - **Current Accepted Baseline:** `V1.4 Complete & Frozen` plus V1.5 milestone M1.5-1a (operator authentication and audit identity) delivered in commit `02edb00`
-- **Current Milestone:** V1.5 M1.5-1a accepted at `02edb00`; reduced M1.5-0 decision record complete; **M1.5-1b (provenance, path containment, merge target, fail-closed worktree setup) is the authorized next milestone.** M1.5-1c needs separate authorization; M1.5-2 onward is not approved.
+- **Current Milestone:** V1.5 M1.5-1a accepted (`02edb00`); reduced M1.5-0 complete (`a4c1d1e`); **M1.5-1b (artifact ownership, canonical path containment, merge target, fail-closed execution setup) implemented, independently reviewed and accepted** (see `docs/V1_5_M1_5_1B_ACCEPTANCE_REPORT.md`; closes SD-02 and SD-06). **M1.5-1c needs separate operator authorization;** M1.5-2 onward is not approved.
 - **Current Phase:** V1.4 delivered and frozen; V1.5 containerized-worker-sandboxing programme in progress (planning committed, M1.5-1a delivered, remaining milestones awaiting operator approval)
 - **Required Model:** `claude-haiku-5-5` (confirmed as the code default in `models/task.py`, `schemas/task.py`, `semantic_evaluator.py`, `agent_service.py`; live API availability was not re-checked during V1.5 planning)
 - **Active Branch:** `main`
 - **Alembic Head:** `6db676dd20fd`
 - **Latest Verified Commit:** `02edb00` (M1.5-1a). Previous: `3623d43` (V1.5 planning), `ed08f15` (V1.4 freeze). The authoritative live commit is recorded in `AGENT_STATE.md`.
-- **Current Blockers:** None for V1.4 as delivered. **M1.5-1a (operator authentication and audit identity) is COMPLETE and verified: SD-01, SD-05 and SD-08 are CLOSED** (see `docs/V1_5_M1_5_1A_ACCEPTANCE_REPORT.md`). **Remaining carried V1.4 security debt (SD-02, SD-03, SD-04, SD-06, SD-07) is open** and gates V1.5 (see `docs/V1_5_TECHNICAL_RISKS.md` section 6): artifact provenance/ownership not validated; full runner/LangGraph recovery untested; merge-target, path-prefix and fail-open worktree defects; host-side execution of agent-written code.
+- **Current Blockers:** None for V1.4 as delivered. **M1.5-1a (operator authentication and audit identity) is COMPLETE and verified: SD-01, SD-05 and SD-08 are CLOSED** (see `docs/V1_5_M1_5_1A_ACCEPTANCE_REPORT.md`). **Remaining carried V1.4 security debt (SD-03, SD-04, SD-07) is open; SD-02 and SD-06 were closed by M1.5-1b** and gates V1.5 (see `docs/V1_5_M1_5_0_DECISION_RECORD.md` section 4): full runner/LangGraph recovery untested (M1.5-1c); host-side execution of agent-written code until the M1.5-4 cutover.
 
 ## Milestone Status Overview
 - **Completed Milestones:** M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, V1.1, V1.2, V1.2.1, V1.3, V1.4-M1, V1.4-M2, V1.4-M2.2, V1.4-M2.2.2, V1.4-M2.2.3, V1.4-M3, V1.4-M4, V1.4-M5, V1.4-M6, V1.4-M7, V1.4-M8 (ALL COMPLETED, VERIFIED & FROZEN)

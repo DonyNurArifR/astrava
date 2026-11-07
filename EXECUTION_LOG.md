@@ -91,3 +91,16 @@ Historical product-delivery log (M0 to V1.4 and the M1.5-1a summary): `docs/EXEC
 - Agy (read-only, each read approved individually): all 14 required items MET, six residual risks preserved as open, no feasibility claim for subscription authentication, the old "reviewed development diagnostic" wording is clearly withdrawn, dependency gating logic confirmed (D1 blocks 4a, hence 4/5/6). Claude spot-checked the diff-based claims (numstat, untouched baseline files).
 - Not done by design: any credential experiment, model call, Docker state change or product-code change.
 
+### [19:1x] CLAUDE — COMMIT+PUSH: M1.5-0 reduced decision record (`a4c1d1e`)
+- Staged exactly seven documentation files (decision record, Amendment A1 appended to `V1_5_ROADMAP.md`, ADR-025, state docs, `AGENT_STATE.md`, `EXECUTION_LOG.md`); no source; secrets scan clean. **Evidence:** push `a55c739..a4c1d1e`; HEAD = origin/main; tree clean.
+
+### [19:11] CLAUDE — PLAN: M1.5-1b source inspection and spec (checkpoint CP-004, before any delegation)
+- Inspected artifact service/API, runner setup path, `workflow_graph` work-dir blocks, planner, worktree manager, projects/executions APIs. New finding: `artifact_node` writes planner-supplied filenames relative to the work dir without containment. Spec in `docs/V1_5_M1_5_1B_SPEC.md`. **Next:** Agy design review, then bounded executor tasks B1-B3.
+
+### [20:18] CLAUDE+AGY+EXECUTOR — IMPLEMENT/VALIDATE: M1.5-1b (checkpoint CP-005)
+- Spec `docs/V1_5_M1_5_1B_SPEC.md` written after source inspection; Agy design review adopted (`.git` component ban, `O_NOFOLLOW` leaf, sanitized git env and hooks off, budget consistency, extra tests). Executor (Haiku 5.5, Claude Pro) tasks B1 path-security + artifact ownership, B2 worktree/API hardening, B3 fail-closed runner/graph/planner, B4 Unicode fix, B5 review remediation. Orchestrator reviewed each diff and re-ran the suite after every task (689 -> 718 -> 786 -> 796 passed).
+- Orchestrator findings: `artifact_node` wrote planner-supplied names outside the work dir; `safe_join` accepted invisible/format Unicode and fullwidth look-alikes (fixed in B4); first mutation round had two equivalent-mutant survivors (redundant guards), re-run against both layers: all caught.
+- Agy independent review: ACCEPT WITH FIXES (F-01..F-04); F-02/F-03 fixed, F-01 mitigated (worktree sha256 + location, no file moves), F-04 unchanged; Agy re-check ACCEPT.
+- **Evidence:** 796 backend tests, ruff clean, Alembic head unchanged, frontend 50 tests/0 lint errors/clean build, no frontend/migration/dependency change. Report `docs/V1_5_M1_5_1B_ACCEPTANCE_REPORT.md`.
+- **Next:** commit and push M1.5-1b only; STOP; request authorization for M1.5-1c.
+

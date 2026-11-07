@@ -1,14 +1,17 @@
 import asyncio
+import hashlib
 import logging
 import uuid
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.approval import ApprovalStatus
 from app.models.artifact import ArtifactType
+from app.models.budget import BudgetReservation, BudgetReservationStatus, BudgetStatus
 from app.models.execution import ExecutionStatus, WorkflowExecution
 from app.models.task import RiskLevel, TaskStatus
 from app.models.usage import ModelExecutionStatus
@@ -29,11 +32,57 @@ from app.services.task_service import TaskService
 from app.services.usage_service import UsageService
 from app.services.workflow_service import WorkflowService
 from app.workspace import GitWorktreeManager, RepoScanner
+from app.workspace.path_security import (
+    ExecutionSetupError,
+    PathContainmentError,
+    resolve_worktree_path,
+    safe_join,
+    validate_repo_path,
+)
 
 logger = logging.getLogger("astrava.orchestrator.runner")
 
 # Concurrency semaphore enforcing MAX_CONCURRENT_EXECUTIONS
 _execution_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_EXECUTIONS)
+
+
+_MAX_OBSERVED_HASH_BYTES = 25 * 1024 * 1024
+
+
+def _worktree_sha256(worktree_path: str, name: str) -> str | None:
+    """SHA-256 of an artifact file inside the execution worktree, or None.
+
+    Returns None silently when the file is absent, the path is unsafe, or it exceeds the size
+    limit. The worktree is the file the agent produced; the storage copy is not consulted.
+    """
+    try:
+        root = resolve_worktree_path(worktree_path)
+        target = safe_join(root, name)
+        if not target.is_file() or target.stat().st_size > _MAX_OBSERVED_HASH_BYTES:
+            return None
+        digest = hashlib.sha256()
+        with target.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except (PathContainmentError, OSError):
+        return None
+
+
+def _redact_host_paths(text: str, repo_path: str | None) -> str:
+    """Keep host filesystem locations out of persisted setup-failure reasons."""
+    replacements: list[tuple[str, str]] = [
+        (str(settings.WORKTREE_STORAGE_PATH), "<worktree storage>"),
+        (str(settings.ARTIFACT_STORAGE_PATH), "<artifact storage>"),
+    ]
+    if repo_path:
+        replacements.append((repo_path, "<configured repository>"))
+        replacements.append((str(Path(repo_path).resolve()), "<configured repository>"))
+    redacted = text
+    for raw, label in replacements:
+        if raw:
+            redacted = redacted.replace(raw, label)
+    return redacted
 
 
 class OrchestrationRunner:
@@ -76,7 +125,6 @@ class OrchestrationRunner:
         if goal_id:
             execution.goal_id = goal_id
             await db.flush()
-        await BudgetGovernor.initialize_budget(db, execution.id, project_id)
         await WorkflowService.update_execution_status(db, execution.id, ExecutionStatus.RUNNING)
         await WorkflowService.record_event(
             db,
@@ -89,36 +137,23 @@ class OrchestrationRunner:
             },
         )
 
-        # Setup Git Worktree Sandboxing & Repository Context if project is bound to a repo
-        worktree_path: str | None = None
-        worktree_branch: str | None = None
-        repo_path_str: str | None = None
-        repo_context_summary: str | None = None
-
+        # Setup Git Worktree Sandboxing & Repository Context if project is bound to a repo.
+        # Fail closed: any setup failure ends the execution FAILED before a provider can run.
         project = await ProjectService.get_by_id(db, project_id)
-        if project and project.repo_path:
-            repo_path_obj = Path(project.repo_path).resolve()
-            if repo_path_obj.exists() and repo_path_obj.is_dir():
-                repo_path_str = str(repo_path_obj)
-                try:
-                    scan_result = RepoScanner.scan(repo_path_obj)
-                    repo_context_summary = scan_result.context_summary
-                except Exception as scan_err:
-                    logger.warning("Repository scanning failed for %s: %s", repo_path_obj, scan_err)
-
-                try:
-                    wt_ctx = await GitWorktreeManager.create_worktree(
-                        repo_path=repo_path_obj,
-                        execution_id=execution.id,
-                        base_branch=project.base_branch or "main",
-                    )
-                    worktree_path = wt_ctx.worktree_path
-                    worktree_branch = wt_ctx.branch_name
-                    execution.worktree_path = worktree_path
-                    execution.worktree_branch = worktree_branch
-                    await db.flush()
-                except Exception as wt_err:
-                    logger.warning("Worktree creation failed for %s: %s", repo_path_obj, wt_err)
+        try:
+            (
+                repo_path_str,
+                worktree_path,
+                worktree_branch,
+                repo_context_summary,
+            ) = await OrchestrationRunner._setup_isolation(db, execution, project)
+        except ExecutionSetupError as exc:
+            return await OrchestrationRunner._fail_execution_setup(
+                db, execution.id, str(exc), project.repo_path if project else None
+            )
+        # Budget is initialized only after setup succeeds, so a failed setup leaves no ACTIVE
+        # budget or reservation behind.
+        await BudgetGovernor.initialize_budget(db, execution.id, project_id)
 
         # Capture immutable agent configuration snapshot for reproducible execution
         agents = await AgentService.list_agents(db)
@@ -171,20 +206,25 @@ class OrchestrationRunner:
         graph = build_orchestrator_graph()
         current_state = dict(initial_state)
         async with _execution_semaphore:
-            async for event in graph.astream(initial_state):
-                for node_name, node_output in event.items():
-                    if node_output and isinstance(node_output, dict):
-                        current_state.update(node_output)
-                    if node_name in (
-                        "retrieve_knowledge",
-                        "plan",
-                        "artifact",
-                        "ingest_knowledge",
-                        "complete",
-                    ):
-                        await OrchestrationRunner._sync_state_to_db(
-                            db, execution.id, project_id, current_state
-                        )
+            try:
+                async for event in graph.astream(initial_state):
+                    for node_name, node_output in event.items():
+                        if node_output and isinstance(node_output, dict):
+                            current_state.update(node_output)
+                        if node_name in (
+                            "retrieve_knowledge",
+                            "plan",
+                            "artifact",
+                            "ingest_knowledge",
+                            "complete",
+                        ):
+                            await OrchestrationRunner._sync_state_to_db(
+                                db, execution.id, project_id, current_state
+                            )
+            except ExecutionSetupError as exc:
+                return await OrchestrationRunner._fail_execution_setup(
+                    db, execution.id, str(exc), repo_path_str
+                )
             final_state = current_state
 
         # 5. Final synchronization back to Database
@@ -262,14 +302,20 @@ class OrchestrationRunner:
             # Resume LangGraph execution from approved task
             graph = build_orchestrator_graph()
             current_state = dict(state)
-            async for event in graph.astream(state):
-                for node_name, node_output in event.items():
-                    if node_output and isinstance(node_output, dict):
-                        current_state.update(node_output)
-                    if node_name in ("artifact", "ingest_knowledge", "complete"):
-                        await OrchestrationRunner._sync_state_to_db(
-                            db, execution_id, execution.project_id, current_state
-                        )
+            try:
+                async for event in graph.astream(state):
+                    for node_name, node_output in event.items():
+                        if node_output and isinstance(node_output, dict):
+                            current_state.update(node_output)
+                        if node_name in ("artifact", "ingest_knowledge", "complete"):
+                            await OrchestrationRunner._sync_state_to_db(
+                                db, execution_id, execution.project_id, current_state
+                            )
+            except ExecutionSetupError as exc:
+                # e.g. the worktree directory was deleted before resume: no host-dir fallback.
+                return await OrchestrationRunner._fail_execution_setup(
+                    db, execution_id, str(exc), state.get("repo_path")
+                )
             final_state = current_state
 
             await OrchestrationRunner._sync_state_to_db(
@@ -277,6 +323,104 @@ class OrchestrationRunner:
             )
             reloaded = await WorkflowService.get_execution(db, execution_id)
             return reloaded or execution
+
+    @staticmethod
+    async def _setup_isolation(
+        db: AsyncSession,
+        execution: WorkflowExecution,
+        project: Any,
+    ) -> tuple[str | None, str | None, str | None, str | None]:
+        """Validate the repository and create the execution worktree.
+
+        Returns (repo_path, worktree_path, worktree_branch, repo_context_summary); all None for
+        a project without repo_path. Raises ExecutionSetupError for any failure.
+        """
+        if not project or not project.repo_path:
+            return None, None, None, None
+
+        try:
+            repo_root = validate_repo_path(project.repo_path)
+        except PathContainmentError as exc:
+            raise ExecutionSetupError(f"Repository rejected: {exc}") from exc
+
+        repo_context_summary: str | None = None
+        try:
+            repo_context_summary = RepoScanner.scan(repo_root).context_summary
+        except Exception as scan_err:
+            # Context scanning is advisory; a scan failure never blocks execution.
+            logger.warning("Repository scanning failed for %s: %s", repo_root, scan_err)
+
+        try:
+            wt_ctx = await GitWorktreeManager.create_worktree(
+                repo_path=repo_root,
+                execution_id=execution.id,
+                base_branch=project.base_branch or "main",
+            )
+        except ExecutionSetupError:
+            raise
+        except Exception as wt_err:
+            raise ExecutionSetupError(
+                f"Worktree creation failed: {type(wt_err).__name__}"
+            ) from wt_err
+
+        execution.worktree_path = wt_ctx.worktree_path
+        execution.worktree_branch = wt_ctx.branch_name
+        await db.flush()
+        return str(repo_root), wt_ctx.worktree_path, wt_ctx.branch_name, repo_context_summary
+
+    @staticmethod
+    async def _close_budget_after_setup_failure(db: AsyncSession, execution_id: uuid.UUID) -> None:
+        """Release open reservations and move the budget to CANCELLED (terminal, not ACTIVE).
+
+        Used when a setup failure happens after a budget exists (resume path). Initial-start
+        failures have no budget and are unaffected.
+        """
+        budget = await BudgetGovernor.get_budget(db, execution_id)
+        if budget is None:
+            return
+        open_reservations = (
+            (
+                await db.execute(
+                    select(BudgetReservation).where(
+                        BudgetReservation.budget_id == budget.id,
+                        BudgetReservation.status == BudgetReservationStatus.ACTIVE,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for reservation in open_reservations:
+            await BudgetGovernor.release(db, reservation.id, reservation.fence_token)
+        budget = await BudgetGovernor.get_budget(db, execution_id)
+        if budget is not None and budget.status not in (
+            BudgetStatus.COMPLETED,
+            BudgetStatus.CANCELLED,
+        ):
+            budget.status = BudgetStatus.CANCELLED
+        await db.flush()
+
+    @staticmethod
+    async def _fail_execution_setup(
+        db: AsyncSession,
+        execution_id: uuid.UUID,
+        reason: str,
+        repo_path: str | None,
+    ) -> WorkflowExecution:
+        """End the execution FAILED with an event; no task or provider has run."""
+        safe_reason = _redact_host_paths(reason, repo_path)
+        await OrchestrationRunner._close_budget_after_setup_failure(db, execution_id)
+        await WorkflowService.update_execution_status(
+            db, execution_id, ExecutionStatus.FAILED, error_message=safe_reason
+        )
+        await WorkflowService.record_event(
+            db, execution_id, "execution_setup_failed", {"reason": safe_reason}
+        )
+        await db.commit()
+        reloaded = await WorkflowService.get_execution(db, execution_id)
+        if reloaded is None:
+            raise ValueError(f"Execution {execution_id} not found")
+        return reloaded
 
     @staticmethod
     async def _sync_state_to_db(
@@ -372,8 +516,17 @@ class OrchestrationRunner:
                     )
         state["task_db_ids"] = task_db_ids
 
-        # 2. Sync artifacts to DB (register_artifact handles deduplication)
+        # 2. Sync artifacts to DB (register_artifact handles deduplication). Task ids are checked
+        # against the live state's task keys; provenance is server-written as "orchestrator".
+        known_task_ids = {str(t.get("task_id")) for t in tasks if t.get("task_id")}
+        isolated_worktree = state.get("worktree_path")
         for art in state.get("artifacts", []):
+            # Isolated executions: hash the file the agent wrote inside the worktree (F-01).
+            observed_sha = None
+            location = "storage"
+            if isolated_worktree:
+                location = "worktree"
+                observed_sha = _worktree_sha256(isolated_worktree, art.get("name", ""))
             try:
                 await ArtifactService.register_artifact(
                     db,
@@ -386,6 +539,12 @@ class OrchestrationRunner:
                         artifact_type=ArtifactType.OTHER,
                         file_size_bytes=art.get("size_bytes", 0),
                     ),
+                    source="orchestrator",
+                    registered_by="orchestrator",
+                    known_task_ids=known_task_ids,
+                    producing_agent_slug=art.get("producing_agent_slug"),
+                    observed_sha256=observed_sha,
+                    location=location,
                 )
             except Exception as e:
                 logger.warning("Could not sync artifact %s: %s", art, e)

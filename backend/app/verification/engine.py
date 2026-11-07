@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.workspace.worktree_manager import hardened_git_argv, sanitized_git_env
+
 
 class CheckResult(BaseModel):
     name: str
@@ -101,9 +103,9 @@ class VerificationEngine:
             return ""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git",
-                "diff",
+                *hardened_git_argv(["diff", "--no-ext-diff", "--no-textconv"]),
                 cwd=str(cwd),
+                env=sanitized_git_env(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

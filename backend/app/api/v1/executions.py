@@ -16,6 +16,7 @@ from app.services.budget_governor import BudgetGovernor, BudgetGovernorError
 from app.services.project_service import ProjectService
 from app.services.workflow_service import WorkflowService
 from app.workspace import GitWorktreeManager
+from app.workspace.path_security import PathContainmentError, resolve_worktree_path
 
 router = APIRouter(prefix="/executions", tags=["Executions"])
 
@@ -265,13 +266,21 @@ async def get_execution_diff(
             "has_changes": False,
         }
 
+    try:
+        worktree = resolve_worktree_path(execution.worktree_path)
+    except PathContainmentError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
     project = await ProjectService.get_by_id(db, execution.project_id)
     base_branch = project.base_branch if project else "main"
 
-    diff_result = await GitWorktreeManager.get_diff(
-        worktree_path=execution.worktree_path,
-        base_branch=base_branch,
-    )
+    try:
+        diff_result = await GitWorktreeManager.get_diff(
+            worktree_path=worktree,
+            base_branch=base_branch,
+        )
+    except PathContainmentError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
     return diff_result.to_dict()
 
 
@@ -289,6 +298,12 @@ async def merge_execution_worktree(
         raise HTTPException(
             status_code=400, detail="Execution does not have an active worktree branch"
         )
+
+    if execution.worktree_path:
+        try:
+            resolve_worktree_path(execution.worktree_path)
+        except PathContainmentError as err:
+            raise HTTPException(status_code=400, detail=str(err)) from err
 
     project = await ProjectService.get_by_id(db, execution.project_id)
     if not project or not project.repo_path:

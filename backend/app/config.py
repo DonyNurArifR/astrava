@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
     ARTIFACT_STORAGE_PATH: Path = BASE_DIR / "storage" / "artifacts"
     WORKTREE_STORAGE_PATH: Path = BASE_DIR / "storage" / "worktrees"
+    # Repositories an execution may use must sit under one of these roots (M1.5-1b).
+    # Empty = fail closed: no repository can be registered or executed.
+    ALLOWED_REPO_ROOTS: list[Path] = []
 
     # Provider & Model Settings
     CLAUDE_CLI_PATH: str = "claude"

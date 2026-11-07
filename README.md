@@ -110,6 +110,7 @@ Dashboard is accessible at: `http://localhost:3000` (or `http://localhost:5173`)
 | `DEBUG` | `false` | Enables OpenAPI docs and verbose logging (refused on non-loopback hosts) |
 | `OPERATOR_API_KEY` | *(unset)* | Operator credential, 32+ chars. Unset = local-dev mode (loopback only). Never set to blank |
 | `ALLOWED_HOSTS` | `["localhost","127.0.0.1","[::1]","::1"]` | Accepted `Host` header names (port ignored) |
+| `ALLOWED_REPO_ROOTS` | `[]` | JSON list of absolute directories under which project repositories may live. **Empty = no repository can be bound or executed (fail closed).** Must not be `/` or your home directory |
 | `SESSION_TTL_SECONDS` | `28800` | Browser session lifetime |
 | `COOKIE_SECURE` | auto | Force the `Secure` cookie flag (auto: HTTPS or non-loopback host) |
 | `DATABASE_URL` | `postgresql+asyncpg://astrava:astrava_dev_password@localhost:5433/astrava` | Async database connection URL |

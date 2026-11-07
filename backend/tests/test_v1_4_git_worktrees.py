@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.config import settings
 from app.db.session import AsyncSessionLocal
 from app.main import app
 from app.models.execution import ExecutionStatus, WorkflowExecution
@@ -13,6 +14,19 @@ from app.models.workspace import Workspace
 from app.schemas.workflow import WorkflowCreate
 from app.services.workflow_service import WorkflowService
 from app.workspace import GitWorktreeManager, RepoScanner
+
+
+@pytest.fixture
+def git_sandbox(monkeypatch, tmp_path: Path) -> Path:
+    """Explicit containment settings for these tests (M1.5-1b): repos live under tmp/repos,
+    worktrees under tmp/worktrees. Not autouse, so the default stays fail-closed."""
+    repos = tmp_path / "repos"
+    worktrees = tmp_path / "worktrees"
+    repos.mkdir()
+    worktrees.mkdir()
+    monkeypatch.setattr(settings, "ALLOWED_REPO_ROOTS", [repos])
+    monkeypatch.setattr(settings, "WORKTREE_STORAGE_PATH", worktrees)
+    return tmp_path
 
 
 def _init_git_repo(repo_dir: Path) -> None:
@@ -120,9 +134,10 @@ def test_repo_scanner_rejects_invalid_path(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("git_sandbox")
 async def test_git_worktree_manager_create_and_isolation(tmp_path: Path):
     """GitWorktreeManager creates isolated branch & worktree; changes do not taint main workspace."""
-    repo_dir = tmp_path / "main_repo"
+    repo_dir = tmp_path / "repos" / "main_repo"
     _init_git_repo(repo_dir)
 
     exec_id = str(uuid.uuid4())
@@ -149,9 +164,10 @@ async def test_git_worktree_manager_create_and_isolation(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("git_sandbox")
 async def test_git_worktree_diff_and_commit(tmp_path: Path):
     """GitWorktreeManager generates accurate unified diffs and commits changes."""
-    repo_dir = tmp_path / "main_repo"
+    repo_dir = tmp_path / "repos" / "main_repo"
     _init_git_repo(repo_dir)
 
     exec_id = str(uuid.uuid4())
@@ -188,9 +204,10 @@ async def test_git_worktree_diff_and_commit(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("git_sandbox")
 async def test_git_worktree_cleanup(tmp_path: Path):
     """GitWorktreeManager cleans up worktree path and deletes the execution branch."""
-    repo_dir = tmp_path / "main_repo"
+    repo_dir = tmp_path / "repos" / "main_repo"
     _init_git_repo(repo_dir)
 
     exec_id = str(uuid.uuid4())
@@ -224,9 +241,10 @@ async def test_git_worktree_cleanup(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("git_sandbox")
 async def test_git_worktree_merge_into_base(tmp_path: Path):
     """GitWorktreeManager merges the execution branch back into target base branch."""
-    repo_dir = tmp_path / "main_repo"
+    repo_dir = tmp_path / "repos" / "main_repo"
     _init_git_repo(repo_dir)
 
     exec_id = str(uuid.uuid4())
@@ -265,9 +283,10 @@ async def test_git_worktree_merge_into_base(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("git_sandbox")
 async def test_api_endpoints_diff_merge_and_scan(tmp_path: Path):
     """REST API endpoints /projects/{id}/scan, /executions/{id}/diff, /executions/{id}/merge."""
-    repo_dir = tmp_path / "api_repo"
+    repo_dir = tmp_path / "repos" / "api_repo"
     _init_git_repo(repo_dir)
     (repo_dir / "pyproject.toml").write_text('[project]\nname = "api-test"\n', encoding="utf-8")
 

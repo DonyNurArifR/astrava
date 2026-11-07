@@ -74,6 +74,9 @@ Aggregated counts: total projects, active projects, tasks, executions, and artif
 ### `GET /api/v1/projects/{project_id}`
 Returns details for a specific project.
 
+### Repository binding (`POST /api/v1/projects`, `PATCH /api/v1/projects/{project_id}`)
+`repo_path` must be an absolute path to the top level of a git work tree that lies inside one of `ALLOWED_REPO_ROOTS` (empty list = rejected) and does not overlap ASTRAVA's storage directories; it is stored in canonical (symlink-resolved) form. `base_branch` must be a plain git branch name (no leading `-`, no `..`, spaces or special characters). Violations return `422`. `GET /projects/{id}/scan` re-validates the stored path (`422`). An execution of a repo-bound project **fails closed**: if the repository is rejected, the base branch does not resolve or the worktree cannot be created, the execution ends `FAILED` with an `execution_setup_failed` event and no task or model call runs.
+
 ### `DELETE /api/v1/projects/{project_id}`
 Deletes project and cascades to tasks, workflows, and artifacts.
 
@@ -124,7 +127,10 @@ Submits decision (`approved` or `rejected`) with reasoning. The approver recorde
 ## 5. Artifacts (`/api/v1/artifacts`)
 
 ### `POST /api/v1/artifacts`
-Registers a new artifact with path validation.
+Registers a new artifact (M1.5-1b ownership and containment rules).
+- The project must exist (`404`); a given `execution_id` must exist (`404`) and belong to the project (`403`); a `task_id` requires an `execution_id` and must be one of that execution's task keys (`403`).
+- `file_path` must resolve (symlinks followed) inside `<ARTIFACT_STORAGE_PATH>/<project_id>/`. Another project's directory is `403`; traversal, absolute paths, `.git` components, control or look-alike Unicode characters, and symlinks are `400`.
+- The server writes `metadata_json.provenance` (`source`, `registered_by` = authenticated operator, `sha256` when the file exists and is at most 25 MB, `size_bytes`). A client-supplied `provenance` key is discarded.
 
 ### `GET /api/v1/artifacts/project/{project_id}`
 Lists all registered artifacts for a project.
@@ -133,7 +139,7 @@ Lists all registered artifacts for a project.
 Returns text/markdown preview of artifact contents.
 
 ### `GET /api/v1/artifacts/{artifact_id}/download`
-Downloads the file directly.
+Downloads the file directly. Preview and download return `404` unless the stored path resolves to a regular file inside artifact storage (symlinks and directories are refused).
 
 ---
 

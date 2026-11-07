@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import uuid
 from dataclasses import dataclass
@@ -9,8 +10,50 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.workspace.path_security import (
+    ExecutionSetupError,
+    PathContainmentError,
+    resolve_worktree_path,
+    validate_ref_name,
+    validate_repo_path,
+)
 
 logger = logging.getLogger(__name__)
+
+EXECUTION_BRANCH_PREFIX = "astrava/exec-"
+_GIT_ENV_KEEP = frozenset({"PATH", "HOME", "USER", "LANG", "TMPDIR"})
+
+
+def sanitized_git_env() -> dict[str, str]:
+    """Environment for every git call made by ASTRAVA.
+
+    Inherited GIT_* variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_SSH_COMMAND, ...)
+    are dropped so ambient values cannot redirect an operation to another repository.
+    """
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in _GIT_ENV_KEEP or key.startswith("LC_")
+    }
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    return env
+
+
+def hardened_git_argv(args: list[str]) -> list[str]:
+    """git argv with repository-controlled program hooks disabled.
+
+    core.hooksPath=/dev/null stops hooks; core.fsmonitor=false stops a repository-configured
+    fsmonitor program from running during status/diff. Command-line -c overrides the repo config.
+    """
+    return [
+        "git",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+        *args,
+    ]
 
 
 @dataclass
@@ -58,11 +101,12 @@ class GitWorktreeManager:
         cwd: Path | str,
         timeout: int = 30,
     ) -> tuple[int, str, str]:
-        cmd = ["git"] + args
+        cmd = hardened_git_argv(args)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=str(cwd),
+                env=sanitized_git_env(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -72,10 +116,10 @@ class GitWorktreeManager:
             stderr_str = stderr_bytes.decode("utf-8", errors="replace")
             return code, stdout_str, stderr_str
         except TimeoutError:
-            logger.error("Git command timed out: %s in %s", cmd, cwd)
+            logger.error("Git command timed out: %s in %s", args, cwd)
             return -1, "", "Git command timed out"
         except Exception as e:
-            logger.error("Git execution failed: %s: %s", cmd, e)
+            logger.error("Git execution failed: %s: %s", args, e)
             return -1, "", str(e)
 
     @classmethod
@@ -95,6 +139,14 @@ class GitWorktreeManager:
         return "main"
 
     @classmethod
+    async def _commit_resolves(cls, repo_p: Path, ref: str) -> bool:
+        code, _, _ = await cls._run_git(
+            ["rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"],
+            cwd=repo_p,
+        )
+        return code == 0
+
+    @classmethod
     async def create_worktree(
         cls,
         repo_path: Path | str,
@@ -102,30 +154,40 @@ class GitWorktreeManager:
         base_branch: str | None = None,
         worktree_dir: Path | str | None = None,
     ) -> WorktreeContext:
-        repo_p = Path(repo_path).resolve()
+        """Create the execution worktree. Fails closed: no HEAD fallback, no uncontained path."""
+        # Defense in depth: the repository must be allowlisted and a git work-tree top level.
+        try:
+            repo_p = validate_repo_path(repo_path)
+        except PathContainmentError as exc:
+            raise ExecutionSetupError(f"Repository rejected: {exc}") from exc
         if not await cls.is_git_repo(repo_p):
             raise ValueError(f"Target path is not a valid git repository: {repo_p}")
 
         exec_id_str = str(execution_id)
-        branch_name = f"astrava/exec-{exec_id_str}"
+        try:
+            branch_name = validate_ref_name(f"{EXECUTION_BRANCH_PREFIX}{exec_id_str}", "branch")
+        except PathContainmentError as exc:
+            raise ExecutionSetupError(f"Invalid execution branch name: {exc}") from exc
 
-        # Resolve base branch
-        if not base_branch:
-            base_branch = await cls.get_current_branch(repo_p)
-        else:
-            # Check if base branch exists, fallback to HEAD if not found
-            code, _, _ = await cls._run_git(["rev-parse", "--verify", base_branch], cwd=repo_p)
-            if code != 0:
-                logger.warning("Base branch '%s' not found, falling back to HEAD", base_branch)
-                base_branch = "HEAD"
+        base = base_branch or await cls.get_current_branch(repo_p)
+        try:
+            base = validate_ref_name(base, kind="base branch")
+        except PathContainmentError as exc:
+            raise ExecutionSetupError(str(exc)) from exc
 
-        if worktree_dir:
-            wt_path = Path(worktree_dir).resolve()
-        else:
-            settings.WORKTREE_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
-            wt_path = (settings.WORKTREE_STORAGE_PATH / exec_id_str).resolve()
+        if not await cls._commit_resolves(repo_p, base):
+            raise ExecutionSetupError(f"Base branch '{base}' does not resolve in the repository")
 
-        # Idempotency / Cleanup leftovers from crashed executions
+        try:
+            if worktree_dir:
+                wt_path = resolve_worktree_path(worktree_dir)
+            else:
+                settings.WORKTREE_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
+                wt_path = resolve_worktree_path(settings.WORKTREE_STORAGE_PATH / exec_id_str)
+        except PathContainmentError as exc:
+            raise ExecutionSetupError(f"Invalid worktree directory: {exc}") from exc
+
+        # Idempotency / cleanup leftovers from crashed executions (contained path only)
         if wt_path.exists():
             await cls._run_git(["worktree", "remove", "--force", str(wt_path)], cwd=repo_p)
             shutil.rmtree(wt_path, ignore_errors=True)
@@ -133,30 +195,28 @@ class GitWorktreeManager:
         await cls._run_git(["branch", "-D", branch_name], cwd=repo_p)
         await cls._run_git(["worktree", "prune"], cwd=repo_p)
 
-        # Create worktree with new branch
         code, stdout, stderr = await cls._run_git(
-            ["worktree", "add", "-b", branch_name, str(wt_path), base_branch],
+            ["worktree", "add", "-b", branch_name, str(wt_path), base],
             cwd=repo_p,
         )
-
         if code != 0:
             error_msg = f"Failed to create git worktree: {stderr or stdout}"
             logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            raise ExecutionSetupError(error_msg)
 
         logger.info(
             "Created git worktree for execution %s at %s on branch %s (base: %s)",
             exec_id_str,
             wt_path,
             branch_name,
-            base_branch,
+            base,
         )
 
         return WorktreeContext(
             worktree_path=str(wt_path),
             branch_name=branch_name,
             repo_path=str(repo_p),
-            base_branch=base_branch,
+            base_branch=base,
             execution_id=exec_id_str,
         )
 
@@ -166,7 +226,8 @@ class GitWorktreeManager:
         worktree_path: Path | str,
         base_branch: str | None = None,
     ) -> GitDiffResult:
-        wt_p = Path(worktree_path).resolve()
+        wt_p = resolve_worktree_path(worktree_path)
+        target_base = validate_ref_name(base_branch or "main", kind="base branch")
         if not wt_p.exists():
             return GitDiffResult(
                 files_changed=[],
@@ -176,21 +237,25 @@ class GitWorktreeManager:
                 has_changes=False,
             )
 
-        target_base = base_branch or "main"
-
-        # Check if base branch exists in repo, fallback to HEAD if needed
-        code_check, _, _ = await cls._run_git(["rev-parse", "--verify", target_base], cwd=wt_p)
-        if code_check != 0:
+        # Read-only display only: fall back to HEAD when the base ref does not exist.
+        if not await cls._commit_resolves(wt_p, target_base):
             target_base = "HEAD"
 
         # Get unified diff against base branch (including staged and unstaged changes)
-        code, diff_text, _ = await cls._run_git(["diff", target_base], cwd=wt_p)
+        # --no-ext-diff/--no-textconv: repository diff drivers never execute.
+        code, diff_text, _ = await cls._run_git(
+            ["diff", "--no-ext-diff", "--no-textconv", target_base], cwd=wt_p
+        )
         if code != 0:
             # Fallback to diff against HEAD
-            code, diff_text, _ = await cls._run_git(["diff", "HEAD"], cwd=wt_p)
+            code, diff_text, _ = await cls._run_git(
+                ["diff", "--no-ext-diff", "--no-textconv", "HEAD"], cwd=wt_p
+            )
 
         # Get numstat for metrics
-        code_stat, stat_text, _ = await cls._run_git(["diff", "--numstat", target_base], cwd=wt_p)
+        code_stat, stat_text, _ = await cls._run_git(
+            ["diff", "--no-ext-diff", "--no-textconv", "--numstat", target_base], cwd=wt_p
+        )
 
         files_changed: list[str] = []
         insertions = 0
@@ -233,7 +298,8 @@ class GitWorktreeManager:
         author_name: str = "Abstract",
         author_email: str = "61998277+DonyNurArifR@users.noreply.github.com",
     ) -> str | None:
-        wt_p = Path(worktree_path).resolve()
+        """Commit worktree changes. Raises PathContainmentError for a path outside storage."""
+        wt_p = resolve_worktree_path(worktree_path)
         if not wt_p.exists():
             return None
 
@@ -268,17 +334,55 @@ class GitWorktreeManager:
         branch_name: str,
         target_branch: str = "main",
     ) -> tuple[bool, str]:
-        repo_p = Path(repo_path).resolve()
-        logger.info("Merging execution branch %s into %s in %s", branch_name, target_branch, repo_p)
+        """Merge an execution branch into target_branch, which must be checked out.
 
-        # Check if target branch exists
+        Every refusal returns (False, message) and leaves the repository untouched. The
+        operator's checkout is never switched.
+        """
+        try:
+            repo_p = validate_repo_path(repo_path)
+            branch = validate_ref_name(branch_name, kind="branch")
+            target = validate_ref_name(target_branch, kind="target branch")
+        except PathContainmentError as exc:
+            logger.warning("Merge refused: %s", exc)
+            return False, f"Merge refused: {exc}"
+
+        if not branch.startswith(EXECUTION_BRANCH_PREFIX):
+            return False, "Merge refused: branch is not an execution branch"
+        if not await cls._commit_resolves(repo_p, f"refs/heads/{branch}"):
+            return False, "Merge refused: execution branch does not exist"
+        if not await cls._commit_resolves(repo_p, f"refs/heads/{target}"):
+            return False, f"Merge refused: merge target '{target}' does not exist"
+
+        code, current_out, _ = await cls._run_git(["symbolic-ref", "--short", "HEAD"], cwd=repo_p)
+        if code != 0:
+            return False, "Merge refused: repository HEAD is detached"
+        current = current_out.strip()
+        if current != target:
+            return (
+                False,
+                f"Repository is on '{current}' but merge target is '{target}'; refusing to merge",
+            )
+
+        code, status_out, _ = await cls._run_git(
+            ["status", "--porcelain", "--untracked-files=no"], cwd=repo_p
+        )
+        if code != 0:
+            return False, "Merge refused: could not read repository status"
+        if status_out.strip():
+            return False, "Merge refused: repository has uncommitted tracked changes"
+
+        message = f"Merge execution branch '{branch}' into '{target}'"
         code, stdout, stderr = await cls._run_git(
-            ["merge", "--no-ff", branch_name, "-m", f"Merge execution branch '{branch_name}'"],
+            ["merge", "--no-ff", "--no-edit", "-m", message, f"refs/heads/{branch}"],
             cwd=repo_p,
         )
-        success = code == 0
-        output = stdout if success else (stderr or stdout)
-        return success, output
+        if code != 0:
+            # Abort only our own failed merge attempt; the status check above proved the tree
+            # was clean, so nothing the operator had in progress is discarded.
+            await cls._run_git(["merge", "--abort"], cwd=repo_p)
+            return False, stderr or stdout
+        return True, stdout
 
     @classmethod
     async def cleanup_worktree(
@@ -288,17 +392,30 @@ class GitWorktreeManager:
         branch_name: str | None = None,
         delete_branch: bool = True,
     ) -> bool:
-        repo_p = Path(repo_path).resolve()
-        wt_p = Path(worktree_path).resolve()
+        """Remove a worktree and optionally its branch. Refuses any path outside storage."""
+        try:
+            wt_p = resolve_worktree_path(worktree_path)
+        except PathContainmentError as exc:
+            logger.error("Refusing worktree cleanup outside worktree storage: %s", exc)
+            return False
 
-        logger.info("Cleaning up git worktree %s (branch: %s)", wt_p, branch_name)
+        branch: str | None = None
+        if delete_branch and branch_name:
+            try:
+                branch = validate_ref_name(branch_name, kind="branch")
+            except PathContainmentError as exc:
+                logger.error("Refusing worktree cleanup with invalid branch: %s", exc)
+                return False
+
+        repo_p = Path(repo_path).resolve()
+        logger.info("Cleaning up git worktree %s (branch: %s)", wt_p, branch)
 
         if await cls.is_git_repo(repo_p):
             await cls._run_git(["worktree", "remove", "--force", str(wt_p)], cwd=repo_p)
             await cls._run_git(["worktree", "prune"], cwd=repo_p)
 
-            if delete_branch and branch_name:
-                await cls._run_git(["branch", "-D", branch_name], cwd=repo_p)
+            if branch:
+                await cls._run_git(["branch", "-D", branch], cwd=repo_p)
 
         if wt_p.exists():
             shutil.rmtree(wt_p, ignore_errors=True)

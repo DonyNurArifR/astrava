@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.project import ProjectStatus
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
-from app.services.project_service import ProjectService
+from app.services.project_service import ProjectService, ProjectValidationError
 from app.workspace import RepoScanner
+from app.workspace.path_security import PathContainmentError, validate_repo_path
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -18,7 +19,10 @@ async def create_project(
     data: ProjectCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ProjectRead:
-    project = await ProjectService.create(db, data)
+    try:
+        project = await ProjectService.create(db, data)
+    except ProjectValidationError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from err
     return ProjectRead.model_validate(project)
 
 
@@ -58,7 +62,10 @@ async def update_project(
     data: ProjectUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ProjectRead:
-    project = await ProjectService.update(db, project_id, data)
+    try:
+        project = await ProjectService.update(db, project_id, data)
+    except ProjectValidationError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from err
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return ProjectRead.model_validate(project)
@@ -86,7 +93,11 @@ async def scan_project_repo(
     if not project.repo_path:
         raise HTTPException(status_code=400, detail="Project does not have a repo_path configured")
     try:
-        scan_result = RepoScanner.scan(project.repo_path)
+        repo_root = validate_repo_path(project.repo_path)
+    except PathContainmentError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from err
+    try:
+        scan_result = RepoScanner.scan(repo_root)
         return scan_result.to_dict()
     except (FileNotFoundError, NotADirectoryError) as err:
         raise HTTPException(status_code=400, detail=str(err)) from err

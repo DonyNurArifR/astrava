@@ -6,6 +6,7 @@ messages never include configuration values (in particular the operator key).
 """
 
 import ipaddress
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -53,6 +54,27 @@ def validate_security_configuration(config: Any) -> None:
         raise SecurityConfigurationError(
             "COOKIE_SECURE cannot be disabled when APP_HOST is non-loopback"
         )
+    # Missing attribute (partial config objects) is treated as the fail-closed empty list.
+    _validate_allowed_repo_roots(getattr(config, "ALLOWED_REPO_ROOTS", []))
+
+
+def _validate_allowed_repo_roots(roots: Any) -> None:
+    """Repository roots must be absolute and must not be the filesystem or the home root.
+
+    Messages do not echo the configured values.
+    """
+    home = Path.home().resolve()
+    for raw in roots:
+        root = Path(raw)
+        if not root.is_absolute():
+            raise SecurityConfigurationError("ALLOWED_REPO_ROOTS entries must be absolute paths")
+        resolved = root.resolve()
+        if resolved == Path("/"):
+            raise SecurityConfigurationError("ALLOWED_REPO_ROOTS must not be the filesystem root")
+        if resolved == home:
+            raise SecurityConfigurationError(
+                "ALLOWED_REPO_ROOTS must not be the user's home directory"
+            )
 
 
 def _is_public_https_origin(origin: str) -> bool:

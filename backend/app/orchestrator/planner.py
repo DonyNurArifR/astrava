@@ -3,9 +3,10 @@ import logging
 import re
 import uuid
 from collections import defaultdict, deque
+from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
 from app.models.project import StudioType
@@ -13,6 +14,7 @@ from app.models.task import ExecutorType, RiskLevel
 from app.providers.base import BaseProvider, ProviderRequest, ProviderStatus
 from app.providers.factory import ProviderFactory
 from app.schemas.intelligence import ObjectiveUnderstandingResponse
+from app.workspace.path_security import PathContainmentError, safe_join
 
 logger = logging.getLogger("astrava.orchestrator.planner")
 
@@ -63,6 +65,23 @@ class PlannedTask(BaseModel):
     expected_output_artifacts: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     verification_criteria: list[str] = Field(default_factory=list)
+
+    @field_validator("expected_output_artifacts")
+    @classmethod
+    def _validate_output_artifact_names(cls, names: list[str]) -> list[str]:
+        """Planner/LLM output names must stay inside the task's work directory.
+
+        Checked with the same rules as safe_join against a dummy absolute root, so nothing
+        touches the filesystem here. An unsafe name raises, and the planner falls back to the
+        deterministic template plan.
+        """
+        dummy_root = Path("/astrava-planner-validation-root")
+        for name in names:
+            try:
+                safe_join(dummy_root, name)
+            except PathContainmentError as exc:
+                raise ValueError(f"Unsafe expected output artifact name: {exc}") from exc
+        return names
 
 
 class CapabilityMatcher:

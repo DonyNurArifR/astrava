@@ -4,12 +4,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import OperatorContext, get_operator_context
 from app.db.session import get_db
 from app.models.artifact import ArtifactType
 from app.schemas.artifact import ArtifactCreate, ArtifactRead
 from app.schemas.lineage import ArtifactLineageResponse
 from app.services.artifact_intelligence_service import ArtifactIntelligenceService
-from app.services.artifact_service import ArtifactService
+from app.services.artifact_service import (
+    ArtifactNotFoundError,
+    ArtifactOwnershipError,
+    ArtifactService,
+)
 from app.services.project_service import ProjectService
 
 router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
@@ -20,10 +25,17 @@ project_artifacts_router = APIRouter(prefix="/projects/{project_id}/artifacts", 
 async def register_artifact(
     data: ArtifactCreate,
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(get_operator_context),
 ) -> ArtifactRead:
     try:
-        artifact = await ArtifactService.register_artifact(db, data)
+        artifact = await ArtifactService.register_artifact(
+            db, data, source="api", registered_by=operator.actor_id
+        )
         return ArtifactRead.model_validate(artifact)
+    except ArtifactNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ArtifactOwnershipError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -74,8 +86,8 @@ async def download_artifact(
     if not artifact:
         raise HTTPException(status_code=404, detail="Artifact not found")
 
-    safe_path = ArtifactService.sanitize_path(artifact.file_path)
-    if not safe_path.exists():
+    safe_path = ArtifactService.servable_path(artifact.file_path)
+    if safe_path is None:
         raise HTTPException(status_code=404, detail="Artifact file not found on disk")
 
     return FileResponse(
