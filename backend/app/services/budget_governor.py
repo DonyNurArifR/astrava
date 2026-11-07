@@ -683,7 +683,6 @@ class BudgetGovernor:
         reservation.status = BudgetReservationStatus.RELEASED
         reservation.resolved_at = datetime.now(UTC)
         await db.flush()
-        await db.flush()
 
     @staticmethod
     async def record_replan(db: AsyncSession, execution_id: uuid.UUID) -> ExecutionBudget:

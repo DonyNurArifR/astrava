@@ -130,6 +130,7 @@ async def create_memory(
     project_id: uuid.UUID,
     data: MemoryCreateRequest,
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> MemoryRead:
     """Create a new project-scoped memory.
 
@@ -152,9 +153,9 @@ async def create_memory(
             source_artifact_id=data.source_artifact_id,
             source_agent_slug=data.source_agent_slug,
             metadata_json=data.metadata_json,
-            actor_type="user",
-            actor_id="user",
-            reason="User created memory via REST API",
+            actor_type=operator.actor_type,
+            actor_id=operator.actor_id,
+            reason=f"Created by {operator.display_name} via REST API",
         )
         await db.commit()
         await db.refresh(memory)
@@ -259,6 +260,7 @@ async def update_memory(
     memory_id: uuid.UUID,
     data: MemoryUpdateRequest,
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> MemoryRead:
     """Update a memory by producing an immutable new revision row.
 
@@ -276,9 +278,9 @@ async def update_memory(
             summary=data.summary,
             content=data.content,
             metadata_json=data.metadata_json,
-            actor_type="user",
-            actor_id="user",
-            reason=data.reason or "User updated memory via REST API",
+            actor_type=operator.actor_type,
+            actor_id=operator.actor_id,
+            reason=data.reason or f"Updated by {operator.display_name} via REST API",
         )
         await db.commit()
         await db.refresh(updated)
@@ -313,6 +315,7 @@ async def archive_memory(
     memory_id: uuid.UUID,
     data: MemoryActionRequest = MemoryActionRequest(),
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> MemoryRead:
     """Soft-archive an active or proposed memory, preserving full audit and revision history."""
     await _verify_project_exists(db, project_id)
@@ -322,9 +325,9 @@ async def archive_memory(
             db=db,
             project_id=project_id,
             memory_id=memory_id,
-            actor_type="user",
-            actor_id="user",
-            reason=data.reason or "Archived via REST API",
+            actor_type=operator.actor_type,
+            actor_id=operator.actor_id,
+            reason=data.reason or f"Archived by {operator.display_name} via REST API",
         )
         await db.commit()
         await db.refresh(archived)
@@ -346,6 +349,7 @@ async def restore_memory(
     memory_id: uuid.UUID,
     data: MemoryActionRequest = MemoryActionRequest(),
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> MemoryRead:
     """Restore an archived memory back to ACTIVE status."""
     await _verify_project_exists(db, project_id)
@@ -355,9 +359,9 @@ async def restore_memory(
             db=db,
             project_id=project_id,
             memory_id=memory_id,
-            actor_type="user",
-            actor_id="user",
-            reason=data.reason or "Restored via REST API",
+            actor_type=operator.actor_type,
+            actor_id=operator.actor_id,
+            reason=data.reason or f"Restored by {operator.display_name} via REST API",
         )
         await db.commit()
         await db.refresh(restored)
@@ -426,6 +430,7 @@ async def resolve_conflict(
     memory_id: uuid.UUID,
     data: MemoryConflictResolveRequest,
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> MemoryRead:
     """Resolve a detected memory conflict using supersede, reject, or merge strategies."""
     await _verify_project_exists(db, project_id)
@@ -436,8 +441,8 @@ async def resolve_conflict(
             project_id=project_id,
             memory_id=memory_id,
             resolution=data.resolution,
-            actor_id=data.actor_id or "user",
-            reason=data.reason,
+            actor_id=data.actor_id or operator.actor_id,
+            reason=data.reason or f"Resolved by {operator.display_name} via REST API",
             merged_summary=data.merged_summary,
             merged_content=data.merged_content,
         )

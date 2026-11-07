@@ -671,19 +671,30 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
                 )
                 attempts_used = (await session.scalar(stmt)) or 0
 
-                # Check attempt 0 reservation state if it exists
-                res_key_0 = f"task:{task_id}:attempt:0"
-                res_0 = await BudgetGovernor.get_reservation_by_key(session, budget.id, res_key_0)
+                # Query all reconciled reservations for this task, ordered by latest attempt first (AUD-M2.2.2-01)
+                stmt_reconciled = (
+                    select(BudgetReservation)
+                    .where(
+                        BudgetReservation.budget_id == budget.id,
+                        BudgetReservation.task_id == task_id,
+                        BudgetReservation.status == BudgetReservationStatus.RECONCILED,
+                    )
+                    .order_by(BudgetReservation.attempt_number.desc())
+                )
+                reconciled_attempts = (await session.scalars(stmt_reconciled)).all()
 
-                # Separate reservation settlement from task completion (AUD-M2.2-02)
+                # Separate reservation settlement from task completion (AUD-M2.2-02 / AUD-M2.2.2-01)
                 # A RECONCILED reservation alone NEVER establishes task completion.
                 # Valid completion requires:
-                # 1. Attempt succeeded at provider/verification level (res_0.metadata_json["success"] is True)
+                # 1. Attempt succeeded at provider/verification level (rec_res.metadata_json["success"] is True)
                 # 2. Output text is non-empty
-                # 3. All expected deliverables exist and are non-empty on disk
-                if res_0 is not None and res_0.status == BudgetReservationStatus.RECONCILED:
-                    attempt_success = res_0.metadata_json.get("success") is True
-                    output_text = res_0.metadata_json.get("output_text") or t.get("output_text", "")
+                # 3. All expected deliverables exist, are non-empty, and belong to this attempt/execution (AUD-M2.2.2-02)
+                adopted_successful_attempt = None
+                for rec_res in reconciled_attempts:
+                    attempt_success = rec_res.metadata_json.get("success") is True
+                    output_text = rec_res.metadata_json.get("output_text") or t.get(
+                        "output_text", ""
+                    )
                     has_output = bool(output_text and str(output_text).strip())
 
                     expected_artifacts = t.get("expected_output_artifacts", [])
@@ -694,24 +705,48 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
                             if not art_file.exists() or art_file.stat().st_size == 0:
                                 artifacts_present = False
                                 break
+                            # Verify artifact ownership and recency (AUD-M2.2.2-02):
+                            # The deliverable must have been created/modified during or after this reservation attempt,
+                            # not leftover from an older run or prior execution.
+                            res_created_ts = (
+                                rec_res.created_at.timestamp() if rec_res.created_at else 0.0
+                            )
+                            file_mtime = art_file.stat().st_mtime
+                            if file_mtime < (res_created_ts - 5.0):  # 5s clock skew buffer
+                                logger.warning(
+                                    "Artifact %s for task %s has stale mtime (%s < %s); rejecting adoption",
+                                    art_name,
+                                    task_id,
+                                    file_mtime,
+                                    res_created_ts,
+                                )
+                                artifacts_present = False
+                                break
 
                     if attempt_success and has_output and artifacts_present:
-                        logger.info(
-                            "Task %s completed and verified in prior run; adopting result",
-                            task_id,
-                        )
-                        t["status"] = "completed"
-                        t["output_text"] = output_text
-                        t["error_message"] = None
-                        continue
+                        adopted_successful_attempt = (rec_res, output_text)
+                        break
                     else:
                         logger.warning(
-                            "Task %s attempt 0 reconciled but incomplete/failed (success=%s, output=%s, artifacts=%s)",
+                            "Task %s attempt %d reconciled but incomplete/failed (success=%s, output=%s, artifacts=%s)",
                             task_id,
+                            rec_res.attempt_number,
                             attempt_success,
                             has_output,
                             artifacts_present,
                         )
+
+                if adopted_successful_attempt is not None:
+                    rec_res, output_text = adopted_successful_attempt
+                    logger.info(
+                        "Task %s attempt %d completed and verified in prior run; adopting result",
+                        task_id,
+                        rec_res.attempt_number,
+                    )
+                    t["status"] = "completed"
+                    t["output_text"] = output_text
+                    t["error_message"] = None
+                    continue
 
                 # If attempts have already been used, determine if retries allow another attempt
                 agent_slug = t.get("assigned_agent_slug", "developer")

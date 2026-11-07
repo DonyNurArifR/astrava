@@ -1109,3 +1109,292 @@ async def test_real_multiprocess_orchestrator_crash_recovery(db_session, tmp_pat
         assert budget.active_reservations_count == 0
         # 1 for Task A + 1 reclaimed for Task B attempt 0 + 1 for Task B retry = 3 attempts
         assert budget.total_agent_attempts == 3
+
+
+# ==============================================================================
+# M1.4-2.2.3: Closure Regression Suite (AUD-M2.2.2-01, 02, 03)
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_resumed_task_adopts_successful_retry_attempt(monkeypatch, db_session, tmp_path):
+    """AUD-M2.2.2-01: When attempt 0 failed, but attempt 1 succeeded before a crash,
+    resumed execution must adopt attempt 1 as completed, instead of falsely failing
+    with 'retry limit exhausted'.
+    """
+    project_id, execution_id = await _seed_execution()
+    async with AsyncSessionLocal() as db:
+        await BudgetGovernor.initialize_budget(db, execution_id, project_id)
+
+        # Attempt 0 failed
+        res0 = await BudgetGovernor.reserve(
+            db,
+            execution_id,
+            "task:retry-task:attempt:0",
+            task_id="retry-task",
+            estimated_cost_usd=0.01,
+            attempt_number=0,
+        )
+        await BudgetGovernor.reconcile(
+            db,
+            res0.id,
+            actual_input_tokens=100,
+            actual_output_tokens=20,
+            duration_ms=10,
+            fence_token=res0.fence_token,
+            actual_cost_usd=0.01,
+            attempt_metadata={
+                "success": False,
+                "provider_status": "failed",
+                "exit_code": 1,
+                "has_output": False,
+                "output_text": "",
+            },
+        )
+
+        # Attempt 1 ran before the crash and SUCCEEDED
+        res1 = await BudgetGovernor.reserve(
+            db,
+            execution_id,
+            "task:retry-task:attempt:1",
+            task_id="retry-task",
+            estimated_cost_usd=0.01,
+            attempt_number=1,
+        )
+        await BudgetGovernor.reconcile(
+            db,
+            res1.id,
+            actual_input_tokens=150,
+            actual_output_tokens=80,
+            duration_ms=15,
+            fence_token=res1.fence_token,
+            actual_cost_usd=0.01,
+            attempt_metadata={
+                "success": True,
+                "provider_status": "success",
+                "exit_code": 0,
+                "has_output": True,
+                "output_text": "Deliverable from Successful Attempt 1",
+            },
+        )
+        await db.commit()
+
+    monkeypatch.setattr(settings, "ARTIFACT_STORAGE_PATH", tmp_path)
+
+    # Resumed process starts up with max_retries = 1 (total allowed attempts = 2)
+    state = {
+        "execution_id": str(execution_id),
+        "project_id": str(project_id),
+        "tasks": [
+            {
+                "task_id": "retry-task",
+                "title": "Task That Succeeded on Attempt 1",
+                "assigned_agent_slug": "developer",
+                "status": "pending",
+                "output_text": "",
+            }
+        ],
+        "current_ready_task_ids": ["retry-task"],
+        "completed_task_ids": [],
+        "failed_task_ids": [],
+        "usage_records": [],
+        "agent_snapshots": {
+            "developer": {
+                "name": "Dev",
+                "instructions": "Code",
+                "execution_config": {"max_retries": 1},
+            }
+        },
+    }
+
+    result = await dispatch_task_node(state)
+    task_res = result["tasks"][0]
+
+    assert task_res["status"] == "completed"
+    assert task_res["output_text"] == "Deliverable from Successful Attempt 1"
+    assert task_res["error_message"] is None
+    assert "retry-task" not in result["failed_task_ids"]
+
+
+@pytest.mark.asyncio
+async def test_stale_artifact_rejected_during_recovery(monkeypatch, db_session, tmp_path):
+    """AUD-M2.2.2-02: Stale artifact created prior to reservation must NOT satisfy
+    the artifact presence check; adoption must be rejected and task re-executed.
+    """
+    project_id, execution_id = await _seed_execution()
+    p_dir = tmp_path / str(project_id)
+    p_dir.mkdir(parents=True, exist_ok=True)
+    stale_file = p_dir / "stale_deliverable.txt"
+    stale_file.write_text("Old deliverable from past execution")
+
+    # Set mtime to 1 hour in the past
+    past_mtime = os.path.getmtime(stale_file) - 3600
+    os.utime(stale_file, (past_mtime, past_mtime))
+
+    async with AsyncSessionLocal() as db:
+        await BudgetGovernor.initialize_budget(db, execution_id, project_id)
+        res0 = await BudgetGovernor.reserve(
+            db,
+            execution_id,
+            "task:stale-art-task:attempt:0",
+            task_id="stale-art-task",
+            estimated_cost_usd=0.01,
+        )
+        await BudgetGovernor.reconcile(
+            db,
+            res0.id,
+            actual_input_tokens=100,
+            actual_output_tokens=50,
+            duration_ms=10,
+            fence_token=res0.fence_token,
+            actual_cost_usd=0.01,
+            attempt_metadata={
+                "success": True,
+                "provider_status": "success",
+                "exit_code": 0,
+                "has_output": True,
+                "output_text": "Code output",
+            },
+        )
+        await db.commit()
+
+    monkeypatch.setattr(settings, "ARTIFACT_STORAGE_PATH", tmp_path)
+
+    provider_called = False
+
+    class FreshProvider:
+        async def execute(self, req: ProviderRequest) -> ProviderResponse:
+            nonlocal provider_called
+            provider_called = True
+            stale_file.write_text("Fresh Deliverable Content")
+            return ProviderResponse(
+                status=ProviderStatus.SUCCESS,
+                exit_code=0,
+                output_text="Fresh Deliverable Content",
+                input_tokens=100,
+                output_tokens=50,
+                duration_ms=10,
+                cost_usd=0.01,
+            )
+
+    monkeypatch.setattr(
+        "app.orchestrator.workflow_graph.ProviderFactory.get_provider",
+        lambda _: FreshProvider(),
+    )
+
+    state = {
+        "execution_id": str(execution_id),
+        "project_id": str(project_id),
+        "tasks": [
+            {
+                "task_id": "stale-art-task",
+                "title": "Stale Artifact Dependent Task",
+                "assigned_agent_slug": "developer",
+                "expected_output_artifacts": ["stale_deliverable.txt"],
+                "status": "pending",
+                "output_text": "",
+            }
+        ],
+        "current_ready_task_ids": ["stale-art-task"],
+        "completed_task_ids": [],
+        "failed_task_ids": [],
+        "usage_records": [],
+        "agent_snapshots": {
+            "developer": {
+                "name": "Dev",
+                "instructions": "Code",
+                "execution_config": {"max_retries": 1},
+            }
+        },
+    }
+
+    result = await dispatch_task_node(state)
+    # The stale artifact was rejected, so provider was called to produce a fresh deliverable
+    assert provider_called is True
+    assert result["tasks"][0]["status"] == "completed"
+    assert result["tasks"][0]["output_text"] == "Fresh Deliverable Content"
+
+
+@pytest.mark.asyncio
+async def test_mutation_endpoints_require_auth_when_configured(monkeypatch, db_session):
+    """AUD-M2.2.2-03: Approval decisions and memory mutation endpoints must strictly
+    require operator credentials when OPERATOR_API_KEY is configured.
+    """
+    project_id, execution_id = await _seed_execution()
+
+    # Create an approval request
+    async with AsyncSessionLocal() as db:
+        from app.models.task import RiskLevel
+        from app.services.approval_service import ApprovalService
+
+        approval = await ApprovalService.request_approval(
+            db,
+            execution_id=execution_id,
+            action_type="high_risk_mutation",
+            description="High risk operation",
+            risk_level=RiskLevel.HIGH,
+        )
+        approval_id = approval.id
+        await db.commit()
+
+    monkeypatch.setattr(settings, "OPERATOR_API_KEY", "operator-secret-token")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. POST /approvals/{id}/decide - Unauthenticated -> 401
+        res = await client.post(
+            f"/api/v1/approvals/{approval_id}/decide",
+            json={"decision": "approved", "reason": "Authorized operator approval"},
+        )
+        assert res.status_code == 401
+
+        # 2. POST /projects/{id}/memories - Unauthenticated -> 401
+        res = await client.post(
+            f"/api/v1/projects/{project_id}/memories",
+            json={
+                "category": "decision",
+                "summary": "Secure Memory",
+                "content": "Secret content",
+            },
+        )
+        assert res.status_code == 401
+
+        # 3. With valid credentials -> 200
+        auth_headers = {
+            "X-ASTRAVA-OPERATOR-KEY": "operator-secret-token",
+            "X-ASTRAVA-ACTOR-NAME": "SecurityLead",
+        }
+        res_auth_appr = await client.post(
+            f"/api/v1/approvals/{approval_id}/decide",
+            headers=auth_headers,
+            json={"decision": "approved", "reason": "Authorized operator approval"},
+        )
+        assert res_auth_appr.status_code == 200
+        assert res_auth_appr.json()["status"] == "approved"
+
+        # 4. Create memory with credentials -> 201
+        res_auth_mem = await client.post(
+            f"/api/v1/projects/{project_id}/memories",
+            headers=auth_headers,
+            json={
+                "category": "decision",
+                "summary": "Secure Memory Authorized",
+                "content": "Secret content authorized",
+            },
+        )
+        assert res_auth_mem.status_code == 201
+        created_mem_id = res_auth_mem.json()["id"]
+
+        # 5. Archive memory unauthenticated -> 401
+        res_arch_unauth = await client.post(
+            f"/api/v1/projects/{project_id}/memories/{created_mem_id}/archive"
+        )
+        assert res_arch_unauth.status_code == 401
+
+        # 6. Archive memory authenticated -> 200
+        res_arch_auth = await client.post(
+            f"/api/v1/projects/{project_id}/memories/{created_mem_id}/archive",
+            headers=auth_headers,
+        )
+        assert res_arch_auth.status_code == 200
+        assert res_arch_auth.json()["status"] == "archived"

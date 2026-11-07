@@ -363,7 +363,7 @@ In milestone M1.4-2.2, execution budget governance was systematically hardened a
   - Genuine $0.00 cost is distinguished via explicit confirmation (`is_cost_zero_confirmed=True`).
 
 - **8.4.4 Distributed Fencing Tokens & Stale Worker Protection (F-04):**
-  - `BudgetReservation` persists a cryptographically secure 64-character `fence_token` generated upon reservation creation.
+  - `BudgetReservation` persists a cryptographically secure 32-character hexadecimal `fence_token` (stored in `String(64)`) generated upon reservation creation via `uuid.uuid4().hex`.
   - All state transitions (`reconcile`, `release`) mandate the matching `fence_token`. Any stale, superseded, or zombie worker attempting to settle a reservation is rejected with `FencingTokenMismatchError`, protecting budget counters from double-spending or corrupted state.
 
 - **8.4.5 Fixed-Point Decimal Monetary Precision (F-05):**

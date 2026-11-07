@@ -680,6 +680,31 @@
   - Updated `docs/ROADMAP.md` and `docs/PROGRESS.md`.
   - Authored release documentation in `docs/EXECUTION_LOG.md`.
 
+## 2026-11-07 — V1.4-M2.2.3: Recovery & Mutation Security Closure
+- **Role Alignment:** Lead AI Architect & Independent Reviewer: Gemini. Executor: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Final closure of all limitations identified in M1.4-2.2.2 Independent Acceptance Audit (AUD-M2.2.2-01 through AUD-M2.2.2-05).
+- **Core Orchestrator Hardening (`backend/app/orchestrator/workflow_graph.py`):**
+  - **Retry-Aware Recovery (AUD-M2.2.2-01):** Replaced hardcoded `attempt:0` lookup with a query for all reconciled reservations for the task, ordered by `attempt_number.desc()`. Resumed executions iterate through reconciled attempts to adopt the latest successful attempt. Tasks that failed on attempt 0 and succeeded on attempt 1 prior to a worker crash are now correctly adopted as `completed` rather than failing with false retry exhaustion.
+  - **Artifact Ownership & Recency Validation (AUD-M2.2.2-02):** Enhanced recovery deliverable validation to inspect artifact file modification timestamps against reservation creation timestamps (`st_mtime >= created_at - 5.0`). Rejects stale deliverable files leftover from past executions, ensuring only authentic outputs produced during the task attempt are adopted.
+- **API Security Hardening (`backend/app/api/v1/approvals.py`, `backend/app/api/v1/memories.py`):**
+  - **Comprehensive Mutation Endpoint Protection (AUD-M2.2.2-03):** Enforced `operator: OperatorContext = Depends(require_authorized_verifier)` on all remaining state-changing endpoints: approval decisions (`POST /approvals/{id}/decide`), memory creation (`POST /memories`), memory update (`PATCH /memories/{id}`), soft-archive (`POST /memories/{id}/archive`), restore (`POST /memories/{id}/restore`), and conflict resolution (`POST /memories/{id}/resolve`).
+  - When `OPERATOR_API_KEY` is configured, unauthenticated requests are rejected with HTTP 401 Unauthorized.
+  - Preserved documented local trust mode when `OPERATOR_API_KEY` is unset.
+- **Code Cleanups & Documentation Corrections:**
+  - Removed duplicate `await db.flush()` in `BudgetGovernor.release()` (`budget_governor.py`).
+  - Corrected documentation in `docs/ARCHITECTURE.md` regarding 32-character hexadecimal `fence_token` generated via `uuid.uuid4().hex`.
+- **Verification & Acceptance:**
+  - Expanded `backend/tests/test_v1_4_workflow_recovery.py` to 13 comprehensive tests (13/13 passed in 4.20s).
+  - Full backend pytest suite: **161/161 tests passed** in 31.36s.
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 95 backend files.
+  - Frontend Vitest suite: 9/9 test files (16 tests) passed in 1.53s; Vite build clean in 210ms.
+  - Alembic migration head: `d4e5f6a1b2c3` (clean, verified).
+- **Documentation & Tracking:**
+  - Added ADR-017 in `docs/DECISIONS.md`.
+  - Updated `docs/ROADMAP.md` and `docs/PROGRESS.md`.
+  - Created and maintained `docs/AUTONOMOUS_EXECUTION_STATE.md`.
+
+
 
 
 

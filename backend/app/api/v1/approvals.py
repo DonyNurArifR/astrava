@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import OperatorContext, require_authorized_verifier
 from app.db.session import get_db
 from app.schemas.approval import ApprovalDecisionRequest, ApprovalRead
 from app.services.approval_service import ApprovalService
@@ -47,13 +48,15 @@ async def decide_approval(
     approval_id: uuid.UUID,
     decision_req: ApprovalDecisionRequest,
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> ApprovalRead:
+    decided_by = decision_req.decided_by or operator.display_name
     approval = await ApprovalService.decide(
         db,
         approval_id,
         status=decision_req.decision,
         reason=decision_req.reason,
-        decided_by=decision_req.decided_by,
+        decided_by=decided_by,
     )
     if not approval:
         raise HTTPException(status_code=404, detail="Approval request not found")
@@ -68,6 +71,7 @@ async def decide_approval(
             "decision": approval.status.value,
             "reason": approval.decision_reason,
             "decided_by": approval.decided_by,
+            "actor_id": operator.actor_id,
         },
     )
     return ApprovalRead.model_validate(approval)
