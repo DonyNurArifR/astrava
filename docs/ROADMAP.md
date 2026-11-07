@@ -1,7 +1,7 @@
 # ASTRAVA Development Roadmap
-**Version:** 1.4  
+**Version:** 1.4 (frozen) with V1.5 in progress  
 **Product:** ASTRAVA — AI Creation and Orchestration Platform ("From vision to execution.")  
-**Overall Status:** V1.4 NEXT-GENERATION AUTONOMOUS INTELLIGENCE COMPLETE & FROZEN
+**Overall Status:** V1.4 NEXT-GENERATION AUTONOMOUS INTELLIGENCE COMPLETE & FROZEN. V1.5 (containerized worker sandboxing): planning committed, M1.5-1a delivered; remaining milestones awaiting operator approval (see `V1_5_ROADMAP.md`, `../AGENT_STATE.md`).
 
 ---
 

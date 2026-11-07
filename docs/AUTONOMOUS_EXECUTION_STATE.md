@@ -1,19 +1,19 @@
 # ASTRAVA Autonomous Execution State
 
 ## Baseline & Execution Context
-- **Current Accepted Baseline:** `V1.4 Complete & Frozen`
-- **Current Milestone:** M1.4-8 — Final V1.4 End-to-End Acceptance & Delivery Freeze (COMPLETED)
-- **Current Phase:** V1.4 Fully Delivered & Baseline Frozen
+- **Current Accepted Baseline:** `V1.4 Complete & Frozen` plus V1.5 milestone M1.5-1a (operator authentication and audit identity) delivered in commit `02edb00`
+- **Current Milestone:** V1.5 M1.5-1a — Operator Authentication & Audit Identity (COMPLETED). No further V1.5 milestone is approved or started.
+- **Current Phase:** V1.4 delivered and frozen; V1.5 containerized-worker-sandboxing programme in progress (planning committed, M1.5-1a delivered, remaining milestones awaiting operator approval)
 - **Required Model:** `claude-haiku-5-5` (confirmed as the code default in `models/task.py`, `schemas/task.py`, `semantic_evaluator.py`, `agent_service.py`; live API availability was not re-checked during V1.5 planning)
 - **Active Branch:** `main`
 - **Alembic Head:** `6db676dd20fd`
-- **Latest Verified Commit:** `ed08f15` (M1.4-8, authored by the operator identity; confirmed as HEAD of `main` with a clean working tree before V1.5 planning began; test results below are as recorded at M1.4-8 and were not re-run during V1.5 planning)
-- **Current Blockers:** None for V1.4 as delivered. **M1.5-1a (operator authentication and audit identity) is COMPLETE and verified: SD-01, SD-05 and SD-08 are CLOSED** (see `docs/V1_5_M1_5_1A_ACCEPTANCE_REPORT.md`). **Remaining carried V1.4 security debt (SD-02, SD-03, SD-04, SD-06, SD-07) is open** and gates V1.5 (see `docs/V1_5_TECHNICAL_RISKS.md` section 6): 16 of 33 mutating API routes unauthenticated; artifact provenance/ownership not validated; full runner/LangGraph recovery untested; merge-target, path-prefix and fail-open worktree defects; host-side execution of agent-written code.
+- **Latest Verified Commit:** `02edb00` (M1.5-1a). Previous: `3623d43` (V1.5 planning), `ed08f15` (V1.4 freeze). The authoritative live commit is recorded in `AGENT_STATE.md`.
+- **Current Blockers:** None for V1.4 as delivered. **M1.5-1a (operator authentication and audit identity) is COMPLETE and verified: SD-01, SD-05 and SD-08 are CLOSED** (see `docs/V1_5_M1_5_1A_ACCEPTANCE_REPORT.md`). **Remaining carried V1.4 security debt (SD-02, SD-03, SD-04, SD-06, SD-07) is open** and gates V1.5 (see `docs/V1_5_TECHNICAL_RISKS.md` section 6): artifact provenance/ownership not validated; full runner/LangGraph recovery untested; merge-target, path-prefix and fail-open worktree defects; host-side execution of agent-written code.
 
 ## Milestone Status Overview
 - **Completed Milestones:** M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, V1.1, V1.2, V1.2.1, V1.3, V1.4-M1, V1.4-M2, V1.4-M2.2, V1.4-M2.2.2, V1.4-M2.2.3, V1.4-M3, V1.4-M4, V1.4-M5, V1.4-M6, V1.4-M7, V1.4-M8 (ALL COMPLETED, VERIFIED & FROZEN)
-- **Active Milestone:** None — All V1.4 milestones completed and accepted.
-- **Next Milestone:** V1.5 Containerized Worker Sandboxing — PLANNING ONLY. Operator approved the direction; planning docs `docs/V1_5_*.md` drafted; implementation NOT approved or started. See `docs/V1_5_ROADMAP.md`.
+- **Active Milestone:** None — all V1.4 milestones and V1.5 M1.5-1a are complete; the next milestone needs explicit operator approval.
+- **Next Milestone:** V1.5 remaining milestones per `docs/V1_5_ROADMAP.md` (M1.5-0, M1.5-1b, M1.5-1c, M1.5-2 ...). **None is approved or started.** Live recovery state: `AGENT_STATE.md` at the repository root.
 
 ## Delivered Capabilities in V1.4 (M1.4-1 through M1.4-8)
 - [x] M1.4-1: Operator identity context, verifier authorization with 403 impersonation prevention, SHA-256 memory fingerprinting, partial unique index, savepoints.
@@ -27,6 +27,8 @@
 - [x] M1.4-8: Full autonomous mission lifecycle verification, budget exhaust ceiling proof, multiprocess lease reclamation proof, concurrent deduplication proof, comprehensive regression and delivery freeze.
 
 ## Verification Evidence
+*Current (re-run at checkpoint CP-001, HEAD `02edb00`):* backend **522 passed**, frontend **50 passed** (13 files), ruff clean, Alembic head `6db676dd20fd`.
+*V1.4 freeze record (historical):*
 - Backend Pytest: **191/191 passing** in 33.09s (100% pass rate).
 - Frontend Vitest: **20/20 passing** across 10 test files in 1.32s (100% pass rate).
 - Frontend Production Build: Clean build in 206ms (`tsc -b && vite build`).
