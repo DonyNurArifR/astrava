@@ -80,3 +80,14 @@ Historical product-delivery log (M0 to V1.4 and the M1.5-1a summary): `docs/EXEC
 ### [19:01] CLAUDE — HANDOVER: checkpoint CP-002 written (uncommitted)
 - `AGENT_STATE.md` and this log updated; checkpoint commit `2fb864b` (docs-only descendant of `02edb00`). **Next:** operator approval to commit CP-002 and to choose the next milestone. No agent has work in flight.
 
+### [19:07] OPERATOR — DECISION: accept M1.5-1a; authorize CP-002 commit, reduced M1.5-0 and M1.5-1b
+- M1.5-1a accepted at `02edb00` (not reimplemented). CP-002 commit authorized (two files). Reduced M1.5-0 authorized (documentation only; no credential or model-availability experiments). M1.5-1b authorized; M1.5-1c requires separate authorization after M1.5-1b acceptance; no M1.5-2 or later.
+
+### [19:03] CLAUDE — COMMIT+PUSH: CP-002 checkpoint (`a55c739`)
+- Verified branch `main`, HEAD = origin, full diff reviewed (two files only, no source), secrets scan clean; entry timestamps corrected from git before staging; staged exactly `AGENT_STATE.md` and `EXECUTION_LOG.md`. **Evidence:** `git show --stat a55c739`; push `2fb864b..a55c739`; HEAD = origin/main; tree clean.
+
+### [19:07] CLAUDE+AGY — VALIDATE: M1.5-0 reduced decision record
+- Claude re-verified Docker read-only (29.8.0, linux/arm64, 12 CPUs, about 8.3 GB, cgroup v2, runc only; no other runtime). Wrote `docs/V1_5_M1_5_0_DECISION_RECORD.md` (DR-01..DR-14), appended Amendment A1 to `docs/V1_5_ROADMAP.md` (11 lines added, 0 deleted; other baseline documents untouched), added ADR-025, updated the state docs.
+- Agy (read-only, each read approved individually): all 14 required items MET, six residual risks preserved as open, no feasibility claim for subscription authentication, the old "reviewed development diagnostic" wording is clearly withdrawn, dependency gating logic confirmed (D1 blocks 4a, hence 4/5/6). Claude spot-checked the diff-based claims (numstat, untouched baseline files).
+- Not done by design: any credential experiment, model call, Docker state change or product-code change.
+

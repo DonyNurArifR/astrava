@@ -150,3 +150,14 @@ M1.5-6  adversarial acceptance + freeze                     needs 5
 - **Testing without Docker in CI:** runtime-interface tests use a fake runtime; Docker-backed tests are marked and run only where the daemon exists.
 - **Documentation:** each milestone updates `PROGRESS.md`, `DECISIONS.md`, `AUTONOMOUS_EXECUTION_STATE.md`.
 - **Out of scope for V1.5:** RBAC/multi-tenancy, multi-repo, remote scheduling, remote git push, Kubernetes. The `WorkerRuntime` seam and `worker_runs` table accommodate them later.
+
+---
+
+## Amendment A1 (2026-11-07) — status and dependency update
+*Appended after `3623d43`; nothing above this line was rewritten. Reviewed separately; full text in `V1_5_M1_5_0_DECISION_RECORD.md`.*
+- **Status correction:** the header statement "no implementation approved or started" is superseded. M1.5-1a is **accepted** at `02edb00`; reduced M1.5-0 (documentation-only decision record) is complete; M1.5-1b is authorized; M1.5-1c requires separate authorization after M1.5-1b is accepted. No milestone from M1.5-2 onward is approved.
+- **M1.5-0 scope reduced:** only the decision record was performed. The D1 credential experiments and the D5 model-availability check are **not** performed and are not authorized.
+- **D1 is BLOCKED** pending an approved provider authentication arrangement. Consequently **M1.5-4a is blocked, and M1.5-4, M1.5-5 and M1.5-6 are blocked through it.** M1.5-1b, M1.5-1c, M1.5-2, M1.5-3 and M1.5-3b do not depend on a worker credential.
+- **D4 tightened:** no unsafe mode of any kind (the planning text that allowed a separately reviewed development diagnostic is withdrawn pending a new reviewed proposal).
+- **Security debt:** SD-01, SD-05, SD-08 are closed; the table in `V1_5_TECHNICAL_RISKS.md` section 6 is superseded by decision record section 4.
+

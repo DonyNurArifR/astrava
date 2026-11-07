@@ -1,17 +1,18 @@
 # ASTRAVA Agent State (authoritative recovery snapshot)
 
 **Owner:** Claude orchestrator (`astrava_orchestrator`). Agy writes only between the `AGY-CHECKPOINT` markers in section 13.
-**Schema:** 1 · **Checkpoint:** CP-002 · **Written:** 2026-11-07 19:01 +0700 · **Recovery mission:** recovery-system bootstrap (docs only)
-**Checkpoint commit:** `2fb864bbd6da888a6ab00fb0dbc32b93ac94fcca` (`main`; a docs-only descendant of `02edb00462d9ef6a98a4eb168dedb253f924b29d`, the last commit that changed product code). **If `git rev-parse HEAD` differs, this file is STALE unless every commit since the checkpoint touches only recovery files (protocol section 6.3): run `AGENT_PROTOCOL.md` section 6 before acting.**
+**Schema:** 1 · **Checkpoint:** CP-003 · **Written:** 2026-11-07 19:07 +0700 · **Recovery mission:** recovery-system bootstrap (docs only)
+**Checkpoint commit:** `a55c73989f794be1e1e73ef9cbcc58da1bf7e5db` (`main`; a docs-only descendant of `02edb00462d9ef6a98a4eb168dedb253f924b29d`, the last commit that changed product code). **If `git rev-parse HEAD` differs, this file is STALE unless every commit since the checkpoint touches only recovery files (protocol section 6.3): run `AGENT_PROTOCOL.md` section 6 before acting.**
 
 ## 1. Git state (verified at CP-001)
-- Branch: `main`. HEAD: `2fb864b` "docs(recovery): add multi-agent recovery protocol, state snapshot and agent instructions" (docs only). `origin/main` equals HEAD (pushed). Product code is unchanged since `02edb00` "feat(v1.5): m1.5-1a operator authentication and audit identity".
-- Recent history: `2fb864b` recovery docs · `02edb00` M1.5-1a (17:33) · `3623d43` V1.5 planning docs (15:51) · `ed08f15` V1.4 freeze (15:01) · `45a295d` M1.4-7 · `37cd500` M1.4-6 (all 2026-11-07, +0700).
+- Branch: `main`. HEAD: `a55c739` "docs(recovery): checkpoint CP-002 ..." (docs only; before it `2fb864b` recovery docs). `origin/main` equals HEAD (pushed). Product code is unchanged since `02edb00` "feat(v1.5): m1.5-1a operator authentication and audit identity".
+- Recent history: `a55c739` CP-002 · `2fb864b` recovery docs · `02edb00` M1.5-1a (17:33) · `3623d43` V1.5 planning docs (15:51) · `ed08f15` V1.4 freeze (15:01) · `45a295d` M1.4-7 · `37cd500` M1.4-6 (all 2026-11-07, +0700).
 - Identity: repo-local `Abstract <61998277+DonyNurArifR@users.noreply.github.com>`. `.claude/` is gitignored; `graphify-out/` is gitignored.
 
 ## 2. Current development milestone
-- **V1.5 — Containerized Worker Sandboxing.** Direction approved by the operator. **M1.5-1a (operator authentication and audit identity) is COMPLETE, verified and pushed.**
-- **No further implementation milestone is approved or started.** The operator must explicitly approve the next one. This recovery mission is documentation-only and implements no product feature.
+- **V1.5 — Containerized Worker Sandboxing.** Accepted: **M1.5-1a** at implementation commit `02edb00462d9ef6a98a4eb168dedb253f924b29d` (operator acceptance; not reimplemented). Complete (documentation only): **reduced M1.5-0** decision record, `docs/V1_5_M1_5_0_DECISION_RECORD.md`, with Amendment A1 appended to `docs/V1_5_ROADMAP.md` and ADR-025.
+- **Authorized next milestone: M1.5-1b only** (artifact ownership and project/execution/task validation, worktree target-branch correctness, canonical path containment, removal of the unsafe host-execution fallback, plus regression and adversarial tests). Starts after the M1.5-0 commit is verified.
+- **Not authorized:** M1.5-1c (needs separate authorization after M1.5-1b is independently accepted), M1.5-2 and everything later. No Docker access for the API process, no credential injection, no API billing, no deployment.
 
 ## 3. Completed features and verified behavior
 | Area | Delivered | Evidence |
@@ -25,20 +26,21 @@
 **M1.5-1a conformance re-check (operator request to "resume M1.5-1a"):** M1.5-1a was already implemented and pushed; the operator's premise that it was not implemented was reconciled by re-verification, not re-implementation. Agy independently checked the committed code against all eleven requirements (R1-R11) and ten security controls (S1-S10): all MET. Claude spot-checked its citations: conclusions confirmed, several line numbers approximate.
 
 ## 4. In-progress implementation
-- **None.** No product code is in flight. Only recovery documentation is being established (uncommitted, section 11).
+- **M1.5-0 reduced decision record:** written and Agy-reviewed (all 14 required items and six preserved residual risks MET); commit pending in this checkpoint.
+- **M1.5-1b:** authorized, **not started**. Next step is source inspection and a recorded spec (written into this file as CP-004 *before* any delegation).
 
-## 5. Pending milestones (all awaiting operator approval; none started)
-Source of truth: `docs/V1_5_ROADMAP.md` (gate matrix). Do not start a milestone before its prerequisites are closed.
-| Milestone | Purpose | Prerequisites |
+## 5. Pending milestones
+Source of truth: `docs/V1_5_ROADMAP.md` plus Amendment A1 and `docs/V1_5_M1_5_0_DECISION_RECORD.md` section 4. Do not start a milestone before its prerequisites are closed and the operator authorizes it.
+| Milestone | Purpose | Status / prerequisites |
 |---|---|---|
-| M1.5-0 | Decision record and operator-gated experiments (D1 credential mechanism, D5 model availability). The roadmap graph lists it as the predecessor of M1.5-1a/1b/1c; the operator authorized M1.5-1a directly | Operator action; the D1 experiments are **blocked** by the Anthropic Consumer Terms section 3.7 restriction (see section 10); the decision-record task is docs-only |
-| M1.5-1b | Artifact provenance/ownership, `merge_worktree` target fix, `sanitize_path` fix, fail-closed worktree setup, `repo_path` allowlist (SD-02, SD-06) | M1.5-0 per roadmap graph (content is independent of D1; needs an operator waiver or a reduced M1.5-0) |
-| M1.5-1c | Full `OrchestrationRunner` and compiled-graph recovery characterization tests (SD-03, SD-04) | M1.5-0 per roadmap graph (same note as 1b) |
-| M1.5-2 | `WorkerRuntime`, pinned worker image, `worker_runs` migration, supervisor | M1.5-1a (done). By the graph this is the only milestone whose stated prerequisite is fully met, but it gives the API process Docker access while SD-02/03/06 are still open, so it is not recommended before 1b |
-| M1.5-3 / 3b / 4a | Snapshot + hardened git import / controlled dependency provisioning / egress + credential strategy | 2 (3 also needs 1a, 1b); 4a also needs D1 outcome |
-| M1.5-4 | Atomic cutover to containerized agent and verification (removes host execution) | 1a, 1b, 1c, 3, 4a |
-| M1.5-5 | Orchestrator integration, leases, recovery, UI | 4, 3b |
-| M1.5-6 | Adversarial acceptance and freeze | 5 |
+| M1.5-0 (reduced) | Docs-only decision record | **Done** when committed (no experiments performed) |
+| M1.5-1a | Operator authentication and audit identity | **Accepted** (`02edb00`) |
+| **M1.5-1b** | Artifact provenance/ownership, `merge_worktree` target fix, canonical path containment, remove fail-open worktree fallback, `repo_path` containment (SD-02, SD-06) | **Authorized** |
+| M1.5-1c | Real `OrchestrationRunner` + persistent workflow recovery validation, retry-aware recovery, stale-worker behavior (SD-03, SD-04) | Needs **separate authorization** after 1b is accepted |
+| M1.5-2 | `WorkerRuntime` (Docker initial target), pinned image, `worker_runs`, supervisor | Prerequisite 1a met; **not authorized**; introduces Docker access for the API process |
+| M1.5-3 / 3b | Snapshot + hardened git import / controlled dependency preparation | After 2 (3 also needs 1b); not authorized |
+| M1.5-4a | Credential strategy | **BLOCKED by D1** |
+| M1.5-4 / 5 / 6 | Cutover to containerized agent execution / integration / acceptance | **Blocked through 4a (D1)** |
 
 ## 6. Responsibilities
 - **Claude orchestrator** (`astrava_orchestrator`): execution, integration, testing, delivery, git (with approval), authoritative `AGENT_STATE.md`, reconciliation and verification of all delegated work.
@@ -74,27 +76,22 @@ Other panes in the Herdr session belong to a different project (`zenar_*`); do n
 - **Stale documents (record only; fix needs operator approval unless listed in section 11):** `docs/V1_5_ROADMAP.md` line 3 still says "no implementation approved or started" (M1.5-1a is delivered); `docs/V1_5_TECHNICAL_RISKS.md` section 6 still lists SD-01/05/08 as OPEN (closed by M1.5-1a); `docs/PROGRESS.md` and `docs/ROADMAP.md` carry 191/20 test figures in older rows (historical).
 - **Scratch material:** the M1.5-1a spec and executor prompts lived in the Claude scratchpad under `/private/tmp/...` and may be gone; their substance is in `docs/V1_5_M1_5_1A_ACCEPTANCE_REPORT.md`.
 
-## 10. Open operator decisions
-- Which milestone is next (recommended: **M1.5-1b**, then **M1.5-1c**, both independent of D1).
-- **D1:** credential mechanism for workers is unresolved and constrained by Anthropic Consumer Terms section 3.7 (automated access only via API key or explicit permission). No OAuth-token minting, subscription-credential injection or OAuth proxy will be built. Alternatives need explicit operator approval.
-- **D5:** live model availability check withheld (cannot prove it avoids API/overage charges).
-- Whether any further M1.5-1a hardening is wanted beyond the delivered scope.
+## 10. Open operator decisions and constraints
+- **D1 BLOCKED:** needs an approved provider authentication arrangement for workers. Anthropic Consumer Terms section 3.7 (operator-cited) restricts automated access; no OAuth-token minting, subscription-credential injection or OAuth proxy; subscription authentication is **not** claimed feasible. Blocks M1.5-4a and, through it, M1.5-4/5/6.
+- **D5 UNVERIFIED:** no live model or availability check authorized; no billable API calls without separate authorization.
+- **No unsafe mode** of any kind (DR-08); no host-execution fallback (DR-07).
+- Authorization for M1.5-1c, M1.5-2 and later milestones is pending.
+- Accepted M1.5-1a residual risks (kept open, not solved): in-memory session revocation; shared operator key; failed logins logged not stored as audit rows; `is_authorized_verifier` true for every authenticated operator; 404/405 route-existence disclosure; DEBUG docs-route exposure on loopback; TLS-proxy origin must be listed in `CORS_ORIGINS`; auth overhead not measured.
 
 ## 11. Uncommitted changes / commit history of recovery documents
-- CP-001 documents (eight files) were committed and pushed by operator approval as `2fb864b`.
-- **Uncommitted since CP-002:** `AGENT_STATE.md` (this snapshot) and `EXECUTION_LOG.md` (new entries). They record Part A-C results only. Commit needs operator approval. Anything else `git status` shows is new work.
-Purpose: establish the recovery system (documentation only). Author: Claude orchestrator unless noted.
-- New: `AGENT_STATE.md`, `AGENT_PROTOCOL.md`, `EXECUTION_LOG.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` (repo root).
-- Edited (stale-state reconciliation only, no behavior): `docs/AUTONOMOUS_EXECUTION_STATE.md` (milestone/commit/test fields), `docs/ROADMAP.md` (header status).
-- Agy's contribution to this checkpoint is confined to section 13 and one appended `EXECUTION_LOG.md` entry. **Verified by diff against pre-delegation copies:** only the marker region and that single log entry changed; `AGENT_PROTOCOL.md` untouched.
-- Reported by Agy but not verifiable by Claude: that `AGENTS.md` and `GEMINI.md` at the repo root are auto-loaded by the Antigravity CLI into its session rules. Both files exist, so the claim is harmless if false; the protocol does not depend on it (the orchestrator also points Agy at the protocol in every assignment).
-No product source, test, migration or dependency file is modified. Verify with `git status --short`.
+- Committed: CP-001 recovery documents `2fb864b`; CP-002 `a55c739`.
+- **Uncommitted at CP-003 (to be committed as the M1.5-0 docs-only commit, operator-authorized):** new `docs/V1_5_M1_5_0_DECISION_RECORD.md`; edited `docs/V1_5_ROADMAP.md` (appended Amendment A1 only; verified 11 added, 0 deleted lines), `docs/DECISIONS.md` (ADR-025), `docs/AUTONOMOUS_EXECUTION_STATE.md`, `docs/ROADMAP.md`, `AGENT_STATE.md`, `EXECUTION_LOG.md`. No source, test, migration or dependency file. After the commit anything `git status` shows is new work.
 
 ## 12. Next actions (exact)
-- **Operator:** (a) approve or reject committing the CP-002 state/log update (section 11); (b) choose the next milestone. By the roadmap graph the strictly ready choices are: **M1.5-0 reduced to its docs-only decision record** (then M1.5-1b and M1.5-1c), or an explicit waiver of M1.5-0 so M1.5-1b can start now; M1.5-2 is also ready by the graph but not recommended before 1b; (c) decide whether the two M1.5-1a observations in section 9 warrant a follow-up; (d) decide D1 direction.
-- **Claude orchestrator:** no product work is open. On approval: commit the CP-002 update (stage by name); on milestone approval: write the task spec into this file first, delegate bounded tasks to `astrava_executor`, request an Agy design review before and an independent review after, verify everything locally, then update this file. Do not start M1.5-1b, M1.5-1c or any later milestone without approval.
-- **Agy:** idle in prompt mode. Keep the section 13 checkpoint current. When asked, review the scope of the operator-chosen milestone (read-only) and research D1 options that respect the Consumer Terms restriction (no implementation).
-- **Executor (`astrava_executor`):** idle. No task until the orchestrator records and assigns one.
+- **Claude orchestrator:** (1) commit and push the M1.5-0 documentation (stage the listed files by name, verify HEAD = origin); (2) inspect the real source for M1.5-1b (artifact service/API, worktree manager, runner setup path, workflow_graph work-dir fallbacks, projects API/service) and write the spec into this file (CP-004) **before** delegating; (3) have Agy design-review the spec (read-only); (4) delegate bounded tasks to `astrava_executor` (Haiku 5.5), review every diff, run all checks, adversarial probes and mutation tests myself; (5) request Agy's independent review of the final diff, remediate, update the acceptance docs, commit and push M1.5-1b only; (6) stop and request authorization for M1.5-1c.
+- **Agy:** idle in prompt mode (each permission is approved individually by the orchestrator). Design review of the M1.5-1b spec when asked, then independent review of the implementation. Read-only unless an assignment names files.
+- **Executor (`astrava_executor`):** idle; no task until the orchestrator records and assigns one.
+- **Operator:** review the M1.5-1b result when reported; decide authorization for M1.5-1c; D1 direction.
 
 ## 13. Agy checkpoint (Agy-owned section; Claude does not edit between the markers)
 <!-- AGY-CHECKPOINT:BEGIN -->
