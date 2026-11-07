@@ -165,5 +165,16 @@
   5. *Relational Persistence:* Add `repo_path` and `base_branch` to `projects` table; add `worktree_path` and `worktree_branch` to `workflow_executions` table via migration `6db676dd20fd`.
 - **Consequences:** Eliminates scratch-directory disconnections; enables real-world codebase editing with full git provenance; guarantees complete isolation from developer workspaces; provides clean diff inspection and automated merge capabilities.
 
+## ADR-021: Agent Capability Matching & Observability Metrics (M1.4-6)
+- **Status:** Accepted
+- **Context:** Prior versions hardcoded agent slug assignments in planning templates or relied on exact string matches. Autonomous intelligence requires matching dynamically synthesized tasks to the best-suited agent personas based on declared capabilities, along with observability into agent reliability, remediation frequency, and cost efficiency.
+- **Decision:**
+  1. *Task Capability Schema (`PlannedTask.required_capabilities`):* Enable tasks to declare required capability tags (e.g., `["database_migrations", "code_implementation"]`, `["automated_testing"]`).
+  2. *Heuristic Capability Matcher (`CapabilityMatcher`):* Compute tag intersection and studio weighting between task requirements and the registered agent repository (`Agent.capabilities`). Dispatch tasks to the highest-scoring available agent with graceful fallback to defaults.
+  3. *Agent Performance Observability (`AgentMetricsService`):* Query relational tables (`tasks`, `model_executions`) to aggregate per-agent success rates, remediation frequency, total tokens, financial cost, and average execution latency.
+  4. *REST Endpoints & UI Visualization:* Expose `GET /api/v1/agents/metrics` and `GET /api/v1/agents/{slug}/metrics`. Render live performance KPI cards directly on `AgentsPage.tsx`.
+- **Consequences:** Eliminates hardcoded agent bindings; routes tasks based on capabilities; enables data-driven agent selection and continuous performance observability.
+
+
 
 

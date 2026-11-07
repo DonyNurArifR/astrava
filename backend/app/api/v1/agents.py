@@ -3,7 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.project import StudioType
-from app.schemas.agent import AgentCreate, AgentRead, AgentStatusUpdate, AgentUpdate
+from app.schemas.agent import (
+    AgentCreate,
+    AgentMetricsResponse,
+    AgentRead,
+    AgentStatusUpdate,
+    AgentUpdate,
+)
+from app.services.agent_metrics_service import AgentMetricsService
 from app.services.agent_service import AgentService
 
 router = APIRouter(prefix="/agents", tags=["Agent Registry"])
@@ -29,6 +36,28 @@ async def seed_agents(
 ) -> dict[str, str | int]:
     count = await AgentService.seed_default_agents(db)
     return {"message": "Default agents seeded successfully", "new_agents_count": count}
+
+
+@router.get("/metrics", response_model=list[AgentMetricsResponse])
+async def get_all_agent_metrics(
+    studio_type: StudioType | None = Query(None, description="Filter by studio type"),
+    db: AsyncSession = Depends(get_db),
+) -> list[AgentMetricsResponse]:
+    return await AgentMetricsService.get_all_agent_metrics(db, studio_type=studio_type)
+
+
+@router.get("/{identifier}/metrics", response_model=AgentMetricsResponse)
+async def get_agent_metrics(
+    identifier: str,
+    db: AsyncSession = Depends(get_db),
+) -> AgentMetricsResponse:
+    metrics = await AgentMetricsService.get_metrics_for_agent(db, identifier)
+    if not metrics:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{identifier}' not found in registry",
+        )
+    return metrics
 
 
 @router.get("/{identifier}", response_model=AgentRead)

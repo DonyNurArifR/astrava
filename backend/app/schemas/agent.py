@@ -57,3 +57,17 @@ class AgentRead(AgentBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AgentMetricsResponse(BaseModel):
+    agent_slug: str
+    agent_name: str
+    studio_type: StudioType
+    total_tasks_assigned: int
+    completed_tasks: int
+    failed_tasks: int
+    success_rate: float
+    total_remediations: int
+    total_cost_usd: float
+    total_tokens: int
+    avg_duration_ms: float

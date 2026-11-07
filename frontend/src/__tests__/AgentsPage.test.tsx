@@ -9,6 +9,8 @@ vi.mock('../api/client', () => ({
     getAgents: vi.fn(),
     updateAgentStatus: vi.fn(),
     seedAgents: vi.fn(),
+    getAllAgentMetrics: vi.fn().mockResolvedValue([]),
+    getAgentMetrics: vi.fn(),
   },
 }));
 

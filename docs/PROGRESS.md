@@ -128,5 +128,13 @@
 | V1.4-M5-T5 | V1.4 | Diff, Merge & Scan REST Endpoints | COMPLETE | `projects.py`, `executions.py` | `GET /projects/{id}/scan`, `GET /executions/{id}/diff`, `POST /executions/{id}/merge` with operator authorization |
 | V1.4-M5-T6 | V1.4 | Frontend Client & Type Bindings | COMPLETE | `client.ts`, `types/api.ts` | `GitDiffResult`, `RepoScanResult`, `getExecutionDiff`, `mergeExecutionWorktree`, `scanProjectRepo` |
 | V1.4-M5-T7 | V1.4 | Worktree Sandboxing & Regression Test Suite | COMPLETE | `test_v1_4_git_worktrees.py`, `tests/` | 7/7 worktree tests passing; full backend suite 182/182 passing in 29.56s; 16/16 frontend vitest passing; clean Vite build |
+| V1.4-M6-T1 | V1.4 | Formal Task Capability Schema | COMPLETE | `backend/app/orchestrator/planner.py` | Added `required_capabilities` to `PlannedTask` |
+| V1.4-M6-T2 | V1.4 | Capability-Based Task Dispatcher (`CapabilityMatcher`) | COMPLETE | `backend/app/orchestrator/planner.py` | Heuristic capability matching based on tag intersection and studio weighting |
+| V1.4-M6-T3 | V1.4 | Goal Decomposer Integration with Capability Matching | COMPLETE | `backend/app/orchestrator/planner.py` | Auto-routes decomposed tasks to specialized agent personas based on declared capabilities |
+| V1.4-M6-T4 | V1.4 | Agent Performance Observability Service (`AgentMetricsService`) | COMPLETE | `backend/app/services/agent_metrics_service.py` | Aggregates task success rates, remediations, token consumption, financial cost, latency |
+| V1.4-M6-T5 | V1.4 | Agent Metrics REST API Endpoints | COMPLETE | `backend/app/api/v1/agents.py` | `GET /api/v1/agents/metrics` and `GET /api/v1/agents/{slug}/metrics` |
+| V1.4-M6-T6 | V1.4 | Frontend Agent Metrics KPI Display & Types | COMPLETE | `AgentsPage.tsx`, `client.ts`, `types/api.ts` | Capability badges, real-time KPI bar (success rate, task count, remediations), 16/16 vitest passing |
+| V1.4-M6-T7 | V1.4 | Capability Matching & Observability Test Suite | COMPLETE | `test_v1_4_agent_capabilities.py`, `tests/` | 5/5 capability tests passing; full backend suite 187/187 passing in 32.79s; clean Vite build |
+
 
 

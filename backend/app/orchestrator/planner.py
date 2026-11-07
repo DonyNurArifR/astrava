@@ -52,6 +52,7 @@ class PlannedTask(BaseModel):
     title: str
     description: str
     assigned_agent_slug: str = "product-manager"
+    required_capabilities: list[str] = Field(default_factory=list)
     executor_type: ExecutorType = ExecutorType.CLAUDE_CODE
     assigned_model: str = "claude-haiku-5-5"
     risk_level: RiskLevel = RiskLevel.LOW
@@ -62,6 +63,59 @@ class PlannedTask(BaseModel):
     expected_output_artifacts: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     verification_criteria: list[str] = Field(default_factory=list)
+
+
+class CapabilityMatcher:
+    """Matches tasks to registered agent personas based on declared capability tags."""
+
+    @classmethod
+    def match_agent(
+        cls,
+        required_capabilities: list[str],
+        available_agents: list[Any],
+        studio_type: StudioType | str = StudioType.SAAS,
+        fallback_slug: str = "developer",
+    ) -> str:
+        if not required_capabilities or not available_agents:
+            return fallback_slug
+
+        studio_val = (
+            studio_type.value if isinstance(studio_type, StudioType) else str(studio_type).lower()
+        )
+        req_set = {c.lower().strip() for c in required_capabilities}
+
+        best_slug = fallback_slug
+        best_score = -1
+
+        for ag in available_agents:
+            if isinstance(ag, dict):
+                ag_studio = ag.get("studio_type")
+                ag_slug = ag.get("slug", "")
+                ag_caps = ag.get("capabilities", [])
+                ag_enabled = ag.get("is_enabled", True)
+            else:
+                ag_studio = getattr(ag, "studio_type", None)
+                ag_slug = getattr(ag, "slug", "")
+                ag_caps = getattr(ag, "capabilities", []) or []
+                ag_enabled = getattr(ag, "is_enabled", True)
+
+            if not ag_enabled:
+                continue
+
+            curr_studio_val = (
+                ag_studio.value if isinstance(ag_studio, StudioType) else str(ag_studio).lower()
+            )
+            studio_match_bonus = 2 if curr_studio_val == studio_val else 0
+
+            ag_caps_set = {str(c).lower().strip() for c in ag_caps}
+            overlap = len(req_set & ag_caps_set)
+
+            score = overlap * 10 + studio_match_bonus
+            if score > best_score and overlap > 0:
+                best_score = score
+                best_slug = ag_slug
+
+        return best_slug
 
 
 class StructuredPlan(BaseModel):
@@ -553,14 +607,27 @@ Respond with ONLY valid JSON adhering to the following structure:
                 ):
                     planned_tasks: list[PlannedTask] = []
                     for t_dict in parsed["tasks"]:
+                        req_caps = list(t_dict.get("required_capabilities", []))
+                        assigned_slug = str(t_dict.get("assigned_agent_slug", "")).strip()
+                        if req_caps:
+                            from app.services.agent_service import DEFAULT_AGENTS
+
+                            assigned_slug = CapabilityMatcher.match_agent(
+                                required_capabilities=req_caps,
+                                available_agents=DEFAULT_AGENTS,
+                                studio_type=studio_type,
+                                fallback_slug=assigned_slug or "developer",
+                            )
+                        elif not assigned_slug:
+                            assigned_slug = "developer"
+
                         planned_tasks.append(
                             PlannedTask(
                                 task_id=str(t_dict.get("task_id", f"task-{uuid.uuid4().hex[:6]}")),
                                 title=str(t_dict.get("title", "Untitled Task")),
                                 description=str(t_dict.get("description", "")),
-                                assigned_agent_slug=str(
-                                    t_dict.get("assigned_agent_slug", "lead-developer")
-                                ),
+                                assigned_agent_slug=assigned_slug,
+                                required_capabilities=req_caps,
                                 risk_level=RiskLevel(t_dict.get("risk_level", "low").lower())
                                 if t_dict.get("risk_level", "low").lower()
                                 in ("low", "medium", "high")

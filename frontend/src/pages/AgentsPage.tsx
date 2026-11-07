@@ -15,10 +15,11 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '../api/client';
-import type { Agent, StudioType } from '../types/api';
+import type { Agent, AgentMetrics, StudioType } from '../types/api';
 
 export const AgentsPage: React.FC = () => {
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [metricsMap, setMetricsMap] = useState<Record<string, AgentMetrics>>({});
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState<string>('');
@@ -58,6 +59,22 @@ export const AgentsPage: React.FC = () => {
           setLoading(false);
         }
       });
+
+    if (typeof api.getAllAgentMetrics === 'function') {
+      api
+        .getAllAgentMetrics(studioFilter)
+        .then(metricsList => {
+          if (!ignore && Array.isArray(metricsList)) {
+            const map: Record<string, AgentMetrics> = {};
+            for (const m of metricsList) {
+              map[m.agent_slug] = m;
+            }
+            setMetricsMap(map);
+          }
+        })
+        .catch(() => {});
+    }
+
     return () => {
       ignore = true;
     };
@@ -252,6 +269,14 @@ export const AgentsPage: React.FC = () => {
                       {agent.available_tools.length} tool(s)
                     </span>
                   </div>
+
+                  {metricsMap[agent.slug] && (
+                    <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 dark:text-slate-400 py-1.5 px-2 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800">
+                      <span>Rate: {metricsMap[agent.slug].success_rate}%</span>
+                      <span>Tasks: {metricsMap[agent.slug].total_tasks_assigned}</span>
+                      <span>Remed: {metricsMap[agent.slug].total_remediations}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 

@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentMetrics,
   Approval,
   Artifact,
   ArtifactLineage,
@@ -379,5 +380,14 @@ export const api = {
   scanProjectRepo: (projectId: string) =>
     fetch(`${API_BASE}/projects/${projectId}/scan`).then(r =>
       handleResponse<RepoScanResult>(r)
+    ),
+
+  // Agent Observability & Metrics (M1.4-6)
+  getAgentMetrics: (slug: string) =>
+    fetch(`${API_BASE}/agents/${slug}/metrics`).then(r => handleResponse<AgentMetrics>(r)),
+
+  getAllAgentMetrics: (studioType?: string) =>
+    fetch(`${API_BASE}/agents/metrics${studioType ? `?studio_type=${studioType}` : ''}`).then(r =>
+      handleResponse<AgentMetrics[]>(r)
     ),
 };

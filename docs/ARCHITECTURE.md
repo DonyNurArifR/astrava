@@ -513,3 +513,24 @@ To ensure safety and eliminate workspace contamination:
   - `GET /api/v1/projects/{project_id}/scan`: Return repository toolchains, entry points, and structural overview.
   - `GET /api/v1/executions/{execution_id}/diff`: Return unified diff, files changed, insertions, and deletions.
   - `POST /api/v1/executions/{execution_id}/merge`: Operator-authenticated merge of execution worktree branch into base branch.
+
+---
+
+## 12. V1.4 Agent Capability Matching & Observability (M1.4-6)
+
+### 12.1 Capability-Based Dispatch (`CapabilityMatcher`)
+To eliminate brittle hardcoded agent assignments and dynamically match tasks to the best-fit agent persona:
+- **Required Capabilities Declaration:** `PlannedTask` declares `required_capabilities: list[str]` (e.g. `["database_migrations", "code_implementation"]` or `["automated_testing", "defect_analysis"]`).
+- **Heuristic Overlap & Studio Scoring:** `CapabilityMatcher.match_agent` computes capability tag overlap against the registered agent registry (`Agent.capabilities`). Studio alignment grants a score multiplier to favor agents within the active Studio (SaaS vs Media).
+- **Goal Decomposition Integration:** `GoalDecomposer` dynamically passes synthesized tasks through `CapabilityMatcher`, ensuring non-standard goals route automatically to specialized agents.
+
+### 12.2 Agent Performance & Observability (`AgentMetricsService`)
+Provides granular insight into agent effectiveness, reliability, and cost-efficiency:
+- **Task Success & Failure Ratios:** Aggregates `total_tasks_assigned`, `completed_tasks`, `failed_tasks`, and calculates `success_rate` percentage.
+- **Remediation Frequency Tracking:** Computes total remediation cycles incurred across all tasks assigned to the agent from `tasks.remediation_history_json`.
+- **Token & Financial Accounting:** Aggregates total `cost_usd`, `total_tokens` (input + output), and `avg_duration_ms` from `model_executions`.
+- **REST Endpoints & Frontend UI:**
+  - `GET /api/v1/agents/metrics`: Returns aggregated metrics for all registered agents.
+  - `GET /api/v1/agents/{slug}/metrics`: Returns detailed performance metrics for a specific agent persona.
+  - `AgentsPage.tsx`: Displays interactive capability tags and real-time performance KPI cards (success rate, task count, remediation count).
+

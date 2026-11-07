@@ -431,3 +431,17 @@ export interface RepoScanResult {
   total_files_scanned: number;
   context_summary: string;
 }
+
+export interface AgentMetrics {
+  agent_slug: string;
+  agent_name: string;
+  studio_type: StudioType;
+  total_tasks_assigned: number;
+  completed_tasks: number;
+  failed_tasks: number;
+  success_rate: number;
+  total_remediations: number;
+  total_cost_usd: number;
+  total_tokens: number;
+  avg_duration_ms: number;
+}

@@ -847,3 +847,36 @@
   - Added ADR-020 in `docs/DECISIONS.md`.
   - Added Section 11 in `docs/ARCHITECTURE.md`.
   - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.
+
+## 2026-11-07 — V1.4-M6: Agent Capability Matching & Observability
+- **Role Alignment:** Lead AI Architect & Development Orchestrator: Gemini. Implementation Engine: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Match dynamically planned tasks to registered agent personas based on declared capabilities and provide granular observability into latency, token consumption, remediation frequency, and cost efficiency (M1.4-6).
+- **Core Architecture & Implementation:**
+  - **Task Capability Formalization (`PlannedTask.required_capabilities` in `planner.py`):**
+    - Added `required_capabilities: list[str]` to `PlannedTask` schema.
+  - **Heuristic Capability Matcher (`CapabilityMatcher` in `planner.py`):**
+    - Calculates tag overlap between required capabilities and registered agent capabilities (`Agent.capabilities`).
+    - Applies studio alignment weighting to favor same-studio agent specialization.
+    - Integrated directly into `GoalDecomposer.decompose_goal` to route synthesized tasks to best-fit agent personas.
+  - **Agent Performance Observability Service (`AgentMetricsService` in `agent_metrics_service.py`):**
+    - Aggregates task success rates, failed tasks, and remediation cycles from `tasks.remediation_history_json`.
+    - Computes token usage, duration, and financial costs across executions from `model_executions`.
+    - Returns structured `AgentMetricsResponse`.
+  - **REST API Endpoints (`backend/app/api/v1/agents.py`):**
+    - `GET /api/v1/agents/metrics`: Returns metrics across all registered agents with optional studio filtering.
+    - `GET /api/v1/agents/{identifier}/metrics`: Returns detailed metrics for a specific agent.
+  - **Frontend Client & UI Visualization:**
+    - Added `AgentMetrics` type in `frontend/src/types/api.ts`.
+    - Added `getAgentMetrics` and `getAllAgentMetrics` in `frontend/src/api/client.ts`.
+    - Upgraded `AgentsPage.tsx` with live performance KPI bars (success rate, task count, remediations).
+- **Verification & Acceptance:**
+  - Created `backend/tests/test_v1_4_agent_capabilities.py` with 5 comprehensive tests (5/5 passed).
+  - Full backend pytest suite: **187/187 tests passed** in 32.79s.
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 109 backend files.
+  - Frontend Vitest suite: 9/9 test files (16 tests) passed in 1.49s; Vite build clean in 177ms.
+  - Alembic migration head: `6db676dd20fd` (clean, verified).
+- **Documentation & Tracking:**
+  - Added ADR-021 in `docs/DECISIONS.md`.
+  - Added Section 12 in `docs/ARCHITECTURE.md`.
+  - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.
+
