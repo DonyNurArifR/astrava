@@ -138,6 +138,11 @@ class WorkflowService:
             execution.error_message = error_message
         if state_data is not None:
             execution.state_data = state_data
+            if "replan_count" in state_data:
+                execution.replan_count = int(state_data.get("replan_count") or 0)
+            if "goal_id" in state_data and state_data["goal_id"]:
+                gid = state_data["goal_id"]
+                execution.goal_id = uuid.UUID(gid) if isinstance(gid, str) else gid
         if checkpoint_id:
             execution.checkpoint_id = checkpoint_id
 

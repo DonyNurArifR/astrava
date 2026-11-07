@@ -1,11 +1,14 @@
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import OperatorContext, require_authorized_verifier
 from app.db.session import get_db
 from app.models.execution import ExecutionStatus
+from app.orchestrator.planner import DAGModifier
 from app.schemas.budget import BudgetLimitsUpdate, BudgetSummaryResponse
 from app.schemas.execution import ExecutionCreate, ExecutionRead
 from app.schemas.remediation import RemediationSummaryResponse
@@ -173,3 +176,70 @@ async def get_execution_remediations(
         tasks_affected=tasks_affected,
         cycles=cycles,
     )
+
+
+class ReplanExecutionRequest(BaseModel):
+    reason: str = Field(..., min_length=5, description="Justification for replanning")
+    new_tasks: list[dict[str, Any]] | None = None
+
+
+@router.post("/{execution_id}/replan", response_model=ExecutionRead)
+async def replan_execution(
+    execution_id: uuid.UUID,
+    data: ReplanExecutionRequest,
+    db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
+) -> ExecutionRead:
+    execution = await WorkflowService.get_execution(db, execution_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    if execution.status in (ExecutionStatus.COMPLETED, ExecutionStatus.CANCELLED):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot replan an execution in status '{execution.status}'",
+        )
+
+    # Record replan in budget governor (enforcing max_replan_count)
+    try:
+        await BudgetGovernor.record_replan(db, execution_id)
+    except BudgetGovernorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    state_data = dict(execution.state_data or {})
+    current_tasks = state_data.get("tasks", [])
+    completed_ids = state_data.get("completed_task_ids", [])
+    failed_ids = state_data.get("failed_task_ids", [])
+
+    if data.new_tasks:
+        try:
+            updated_tasks = DAGModifier.modify_dag(
+                current_tasks=current_tasks,
+                completed_task_ids=completed_ids,
+                failed_task_ids=failed_ids,
+                new_or_modified_tasks=data.new_tasks,
+            )
+            state_data["tasks"] = updated_tasks
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid replan DAG: {exc}") from exc
+
+    state_data["replan_needed"] = True
+    state_data["replan_reason"] = data.reason
+    state_data["replan_count"] = (execution.replan_count or 0) + 1
+
+    execution.replan_count = state_data["replan_count"]
+    execution.state_data = state_data
+
+    await WorkflowService.record_event(
+        db,
+        execution_id,
+        "execution_replan_requested",
+        {
+            "reason": data.reason,
+            "replan_count": execution.replan_count,
+            "actor_id": operator.actor_id,
+        },
+    )
+    await db.commit()
+    await db.refresh(execution)
+    return ExecutionRead.model_validate(execution)

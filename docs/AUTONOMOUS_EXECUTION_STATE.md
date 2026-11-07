@@ -1,35 +1,35 @@
 # ASTRAVA Autonomous Execution State
 
 ## Baseline & Execution Context
-- **Current Accepted Baseline:** `M1.4-3 Verified`
-- **Current Milestone:** M1.4-3 — Semantic Evaluator & Automated Remediation Loop (COMPLETED)
-- **Current Phase:** Transitioning to M1.4-4 (Adaptive Goal Planner & Dynamic DAG Modification)
+- **Current Accepted Baseline:** `M1.4-4 Verified`
+- **Current Milestone:** M1.4-4 — Adaptive Goal Planner & Dynamic DAG Modification (COMPLETED)
+- **Current Phase:** Transitioning to M1.4-5 (Repository Context & Git Worktree Sandboxing)
 - **Required Model:** `claude-haiku-5-5` (Verified)
 - **Active Branch:** `main`
-- **Alembic Head:** `4566f72d5e69`
-- **Latest Verified Commit:** Pending commit for M1.4-3
+- **Alembic Head:** `5fe7bbcf8347`
+- **Latest Verified Commit:** Pending commit for M1.4-4
 - **Current Blockers:** None
 
 ## Milestone Status Overview
-- **Completed Milestones:** M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, V1.1, V1.2, V1.2.1, V1.3, V1.4-M1, V1.4-M2, V1.4-M2.2, V1.4-M2.2.2, V1.4-M2.2.3, V1.4-M3 (ALL VERIFIED & ACCEPTED)
-- **Active Milestone:** M1.4-3 COMPLETED. Ready to transition to M1.4-4: Adaptive Goal Planner & Dynamic DAG Modification.
-- **Next Milestone:** M1.4-4 — Adaptive Goal Planner & Dynamic DAG Modification
+- **Completed Milestones:** M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, V1.1, V1.2, V1.2.1, V1.3, V1.4-M1, V1.4-M2, V1.4-M2.2, V1.4-M2.2.2, V1.4-M2.2.3, V1.4-M3, V1.4-M4 (ALL VERIFIED & ACCEPTED)
+- **Active Milestone:** M1.4-4 COMPLETED. Ready to transition to M1.4-5: Repository Context & Git Worktree Sandboxing.
+- **Next Milestone:** M1.4-5 — Repository Context & Git Worktree Sandboxing
 
-## Delivered Capabilities in M1.4-3
-- [x] Tier 1 Deterministic Verification Engine enhancements: `StructuredDiagnostic` extraction (file path, line number, error type, summary bounded $\le 2500$ chars).
-- [x] Tier 2 Semantic Evaluator (`SemanticEvaluator` / `SemanticEvaluationProvider`): Claude Haiku 5.5 evaluation against task `acceptance_criteria` and schema requirements, with compliance scoring (0.0 to 1.0) and gap analysis.
-- [x] Closed-Loop LangGraph Remediation Node (`remediation_node`): high-priority diagnostic prompt header (`REMEDIATION REQUIRED (Cycle N/3)`), conditional graph routing, and clean termination to `END`.
-- [x] Strict 3-Cycle Remediation Cap per task preventing infinite loops.
-- [x] Centralized Budget Governor integration: `BudgetGovernor.record_remediation_turn()` tracking against `max_remediation_turns` with `EXHAUSTED` status enforcement.
-- [x] Relational persistence: Alembic migration `4566f72d5e69` adding `tasks.remediation_history_json` and `workflow_executions.remediation_count`.
-- [x] REST API endpoint `GET /api/v1/executions/{execution_id}/remediations` and frontend inspector in `ExecutionsPage.tsx`.
+## Delivered Capabilities in M1.4-4
+- [x] Autonomous Goal Decomposition (`GoalDecomposer`): Claude Haiku 5.5 dynamic DAG synthesis from natural language objectives with project memory context injection.
+- [x] Topological Validation: Kahn's algorithm acyclicity and dependency verification with automatic fallback to standard template on failures.
+- [x] Runtime Dynamic DAG Modification (`DAGModifier`): Invariant enforcement preserving completed tasks as immutable ground truth, unexecuted task replacement, and composite graph validation.
+- [x] Closed-Loop Replanning Node (`replan_node`): LangGraph state graph integration with conditional routing.
+- [x] Strict Budget Ceiling Guardrail: 2-replan limit ceiling enforced via `BudgetGovernor.record_replan()`.
+- [x] Relational Persistence: Alembic migration `5fe7bbcf8347` adding `project_goals` table, `workflow_executions.goal_id`, and `workflow_executions.replan_count`.
+- [x] REST API & Frontend Client: `/api/v1/projects/{project_id}/goals` CRUD, `/execute` trigger, and operator-authorized `/replan` endpoints with TypeScript client types.
 
 ## Verification Evidence
-- Backend Pytest: **168/168 passing** in 29.12s.
-- Frontend Vitest: **16/16 passing** in 1.46s.
-- Frontend Production Build: Clean in 199ms.
-- Code Hygiene: Ruff check & format 100% clean across 98 files.
-- Alembic Migration Head: `4566f72d5e69` (clean, verified).
+- Backend Pytest: **175/175 passing** in 31.96s.
+- Frontend Vitest: **16/16 passing** in 1.47s.
+- Frontend Production Build: Clean in 167ms.
+- Code Hygiene: Ruff check & format 100% clean across 103 files.
+- Alembic Migration Head: `5fe7bbcf8347` (clean, verified).
 
 ## Next Exact Action
-Commit and push M1.4-3 to origin/main, then commence M1.4-4 (Adaptive Goal Planner & Dynamic DAG Modification).
+Commit and push M1.4-4 to origin/main, then autonomously commence M1.4-5 (Repository Context & Git Worktree Sandboxing).

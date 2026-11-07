@@ -1,12 +1,50 @@
+import json
+import logging
+import re
 import uuid
 from collections import defaultdict, deque
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.models.project import StudioType
 from app.models.task import ExecutorType, RiskLevel
+from app.providers.base import BaseProvider, ProviderRequest, ProviderStatus
+from app.providers.factory import ProviderFactory
 from app.schemas.intelligence import ObjectiveUnderstandingResponse
+
+logger = logging.getLogger("astrava.orchestrator.planner")
+
+
+def _extract_json_dict(text: str) -> dict[str, Any] | None:
+    text = text.strip()
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(1))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            data = json.loads(text[start : end + 1])
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return None
 
 
 class PlannedTask(BaseModel):
@@ -430,3 +468,223 @@ class PlannerService:
             is_valid_dag=True,
             retrieval_context=retrieval_context,
         )
+
+
+class GoalDecomposer:
+    """Decomposes high-level objectives into dynamic DAG execution plans using Claude Haiku."""
+
+    @classmethod
+    async def decompose_goal(
+        cls,
+        objective: str,
+        project_id: str,
+        studio_type: StudioType = StudioType.SAAS,
+        retrieval_context: str | None = None,
+        provider: BaseProvider | None = None,
+    ) -> StructuredPlan:
+        # If in test mode and no provider explicitly supplied, return deterministic template
+        if settings.APP_ENV == "test" and provider is None:
+            return PlannerService.generate_plan(
+                project_id=project_id,
+                objective=objective,
+                studio_type=studio_type,
+                retrieval_context=retrieval_context,
+            )
+
+        prompt = f"""You are the ASTRAVA Chief Systems Architect & Autonomous Goal Decomposer.
+Decompose the following user objective into a structured execution DAG consisting of 3 to 8 discrete tasks.
+
+## User Objective:
+{objective}
+
+## Studio Domain:
+{studio_type.value}
+
+## Project Context / Active Architectural Constraints:
+{retrieval_context or "No prior project memory specified."}
+
+## Instructions:
+1. Break down the objective into modular, sequential or parallel tasks.
+2. Assign each task to the most appropriate agent slug:
+   - For SaaS: product-manager, solution-architect, lead-developer, frontend-engineer, qa-engineer, security-specialist
+   - For Media: content-strategist, audience-analyst, scriptwriter, storyboard-artist, seo-specialist, production-assistant, content-quality-reviewer
+3. Define explicit task dependencies (DAG without cycles). Independent tasks can run in parallel.
+4. Specify risk_level: "low", "medium", or "high". Set requires_approval: true for high-risk operations (e.g. destructive actions, deployments, final release).
+5. Specify expected output artifact filenames and acceptance criteria for each task.
+
+Respond with ONLY valid JSON adhering to the following structure:
+{{
+  "strategy_summary": "High-level strategy description...",
+  "estimated_cost_usd": 0.05,
+  "tasks": [
+    {{
+      "task_id": "task-1-slug",
+      "title": "Task Title",
+      "description": "Task details...",
+      "assigned_agent_slug": "solution-architect",
+      "risk_level": "low",
+      "requires_approval": false,
+      "priority": 1,
+      "dependencies": [],
+      "expected_output_artifacts": ["architecture_spec.md"],
+      "acceptance_criteria": ["Specifies component boundaries", "Defines database schema"],
+      "verification_criteria": ["non_empty_file"]
+    }}
+  ]
+}}
+"""
+        eval_provider = provider or ProviderFactory.get_provider("claude_code")
+        req = ProviderRequest(
+            prompt=prompt,
+            system_prompt="You are a strict software architect. Output only JSON.",
+            timeout_seconds=45,
+            model="claude-haiku-5-5",
+        )
+
+        try:
+            resp = await eval_provider.execute(req)
+            if resp.status == ProviderStatus.SUCCESS and resp.output_text.strip():
+                parsed = _extract_json_dict(resp.output_text)
+                if (
+                    parsed
+                    and "tasks" in parsed
+                    and isinstance(parsed["tasks"], list)
+                    and parsed["tasks"]
+                ):
+                    planned_tasks: list[PlannedTask] = []
+                    for t_dict in parsed["tasks"]:
+                        planned_tasks.append(
+                            PlannedTask(
+                                task_id=str(t_dict.get("task_id", f"task-{uuid.uuid4().hex[:6]}")),
+                                title=str(t_dict.get("title", "Untitled Task")),
+                                description=str(t_dict.get("description", "")),
+                                assigned_agent_slug=str(
+                                    t_dict.get("assigned_agent_slug", "lead-developer")
+                                ),
+                                risk_level=RiskLevel(t_dict.get("risk_level", "low").lower())
+                                if t_dict.get("risk_level", "low").lower()
+                                in ("low", "medium", "high")
+                                else RiskLevel.LOW,
+                                requires_approval=bool(t_dict.get("requires_approval", False)),
+                                priority=int(t_dict.get("priority", 1)),
+                                dependencies=list(t_dict.get("dependencies", [])),
+                                expected_output_artifacts=list(
+                                    t_dict.get("expected_output_artifacts", [])
+                                ),
+                                acceptance_criteria=list(t_dict.get("acceptance_criteria", [])),
+                                verification_criteria=list(
+                                    t_dict.get("verification_criteria", ["non_empty_file"])
+                                ),
+                            )
+                        )
+                    # Validate DAG acyclicity using Kahn's algorithm
+                    stages = PlannerService.validate_and_compute_stages(planned_tasks)
+                    selected_agents = list({t.assigned_agent_slug for t in planned_tasks})
+                    return StructuredPlan(
+                        project_id=project_id,
+                        objective=objective,
+                        studio_type=studio_type,
+                        strategy_summary=str(
+                            parsed.get("strategy_summary", f"Dynamic plan for {objective}")
+                        ),
+                        estimated_cost_usd=float(
+                            parsed.get("estimated_cost_usd", 0.015 * len(planned_tasks))
+                        ),
+                        selected_agent_slugs=selected_agents,
+                        tasks=planned_tasks,
+                        execution_stages=stages,
+                        is_valid_dag=True,
+                        retrieval_context=retrieval_context,
+                    )
+        except Exception as e:
+            logger.warning(
+                "GoalDecomposer dynamic decomposition failed, falling back to template: %s", e
+            )
+
+        # Fallback to deterministic plan
+        return PlannerService.generate_plan(
+            project_id=project_id,
+            objective=objective,
+            studio_type=studio_type,
+            retrieval_context=retrieval_context,
+        )
+
+
+class DAGModifier:
+    """Modifies an in-flight execution DAG dynamically while strictly preserving completed tasks."""
+
+    @classmethod
+    def modify_dag(
+        cls,
+        current_tasks: list[dict[str, Any]],
+        completed_task_ids: list[str],
+        failed_task_ids: list[str],
+        new_or_modified_tasks: list[dict[str, Any]] | list[PlannedTask],
+        replace_unexecuted: bool = True,
+    ) -> list[dict[str, Any]]:
+        completed_set = set(completed_task_ids)
+        current_map = {t["task_id"]: dict(t) for t in current_tasks}
+
+        # 1. Enforce invariant: completed tasks are immutable
+        for cid in completed_set:
+            if cid not in current_map:
+                raise ValueError(f"Completed task '{cid}' missing from current task set")
+
+        # 2. Integrate replacements or new tasks
+        modified_dict_list: list[dict[str, Any]] = []
+        if isinstance(new_or_modified_tasks, list):
+            for item in new_or_modified_tasks:
+                if isinstance(item, PlannedTask):
+                    modified_dict_list.append(item.model_dump())
+                elif isinstance(item, dict):
+                    modified_dict_list.append(dict(item))
+
+        # Build new task map starting with immutable completed tasks
+        final_map: dict[str, dict[str, Any]] = {}
+        for cid in completed_task_ids:
+            task_copy = dict(current_map[cid])
+            task_copy["status"] = "completed"
+            final_map[cid] = task_copy
+
+        # Merge unexecuted / modified tasks
+        for t in modified_dict_list:
+            tid = t["task_id"]
+            if tid in completed_set:
+                # Disallow modifying completed task state or dependencies
+                continue
+            if t.get("status") not in ("completed", "failed"):
+                t["status"] = "pending"
+            final_map[tid] = t
+
+        # If not replacing all unexecuted tasks, retain any uncompleted current tasks not explicitly replaced
+        if not replace_unexecuted:
+            modified_ids = {t["task_id"] for t in modified_dict_list}
+            for tid, t in current_map.items():
+                if tid not in completed_set and tid not in modified_ids:
+                    final_map[tid] = t
+
+        # 3. Kahn's validation: convert all final tasks to PlannedTask and validate acyclicity
+        planned_objects: list[PlannedTask] = []
+        for tid, t in final_map.items():
+            planned_objects.append(
+                PlannedTask(
+                    task_id=tid,
+                    title=t.get("title", "Task"),
+                    description=t.get("description", ""),
+                    assigned_agent_slug=t.get("assigned_agent_slug", "lead-developer"),
+                    risk_level=RiskLevel(t.get("risk_level", "low").lower())
+                    if t.get("risk_level", "low").lower() in ("low", "medium", "high")
+                    else RiskLevel.LOW,
+                    requires_approval=bool(t.get("requires_approval", False)),
+                    priority=int(t.get("priority", 1)),
+                    dependencies=list(t.get("dependencies", [])),
+                    expected_output_artifacts=list(t.get("expected_output_artifacts", [])),
+                    acceptance_criteria=list(t.get("acceptance_criteria", [])),
+                    verification_criteria=list(t.get("verification_criteria", ["non_empty_file"])),
+                )
+            )
+
+        # validate_and_compute_stages will raise ValueError on cycles or missing dependencies
+        PlannerService.validate_and_compute_stages(planned_objects)
+
+        return list(final_map.values())

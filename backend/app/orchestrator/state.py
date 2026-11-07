@@ -27,6 +27,10 @@ class OrchestrationState(TypedDict, total=False):
     budget_exhausted: bool
     replanning: bool
     replan_count: int
+    goal_id: str | None
+    replan_needed: bool
+    replan_reason: str | None
+    replan_records: list[dict[str, Any]]
     # Project Intelligence & Memory (V1.3 M1.3-5)
     retrieved_memories: list[dict[str, Any]]
     retrieved_artifacts: list[dict[str, Any]]

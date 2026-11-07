@@ -738,11 +738,79 @@
 - **Documentation & Tracking:**
   - Added ADR-018 in `docs/DECISIONS.md`.
   - Updated Section 9 in `docs/ARCHITECTURE.md`.
+  - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.## 2026-11-07 — V1.4-M4: Adaptive Goal Planner & Dynamic DAG Modification
+- **Role Alignment:** Lead AI Architect & Development Orchestrator: Gemini. Implementation Engine: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Adaptive goal decomposition, non-templated dynamic task graph generation, runtime DAG modification preserving immutable completed deliverables, closed-loop replanning node, and strict budget limit enforcement (M1.4-4 / TR-05).
+- **Core Architecture & Implementation:**
+  - **Database Schema Migration (`5fe7bbcf8347`):**
+    - Created and applied Alembic migration `5fe7bbcf8347_add_project_goals_and_replan_tracking.py`.
+    - Added `project_goals` table with composite index `ix_project_goals_project_status`.
+    - Added `workflow_executions.goal_id` foreign key and `replan_count` counter column.
+  - **Goal Domain Modeling & Services (`goal.py`, `goal_service.py`):**
+    - Added `ProjectGoal` SQLAlchemy model and Pydantic schemas (`GoalCreate`, `GoalUpdate`, `GoalRead`).
+    - Implemented `GoalService` CRUD and `recalculate_progress` with automatic status transition to `ACHIEVED` when progress reaches 100%.
+  - **Autonomous Goal Decomposition (`GoalDecomposer` in `planner.py`):**
+    - Prompts Claude Haiku 5.5 to synthesize tailored execution DAGs from arbitrary natural-language project goals.
+    - Ingests project memory context into the decomposition prompt for contextual alignment.
+    - Validates synthesized DAGs via Kahn's algorithm; falls back gracefully to standard template on parse or acyclicity failures.
+  - **Runtime DAG Modification Invariant (`DAGModifier` in `planner.py`):**
+    - Enforces strict immutability of completed tasks: completed task IDs, outputs, and terminal status cannot be overwritten or deleted.
+    - Replaces unexecuted tasks with revised plan (`replace_unexecuted=True`).
+    - Re-validates composite graph acyclicity via Kahn's algorithm before execution.
+  - **Closed-Loop Replanning Node (`backend/app/orchestrator/workflow_graph.py`):**
+    - Integrated `replan_node` into LangGraph state graph with conditional edge routing: `route_after_verify` (`remediation`, `replan`, `artifact`) and `route_after_replan` (`approval_check`, `__end__`).
+    - Enforces 2-replan limit ceiling via `BudgetGovernor.record_replan(db, execution_id)`.
+    - Emits `workflow_replan` telemetry event with iteration count, reason, and task counts.
+  - **REST API & Frontend Client:**
+    - Added `/api/v1/projects/{project_id}/goals` CRUD and `/execute` trigger endpoints.
+    - Added operator-authorized `POST /api/v1/executions/{execution_id}/replan` endpoint.
+    - Updated frontend API client (`client.ts`) and TypeScript types (`api.ts`).
+- **Verification & Acceptance:**
+  - Created `backend/tests/test_v1_4_adaptive_planning.py` with 7 comprehensive tests (7/7 passed).
+  - Full backend pytest suite: **175/175 tests passed** in 31.96s.
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 103 backend files.
+  - Frontend Vitest suite: 9/9 test files (16 tests) passed in 1.47s; Vite build clean in 167ms.
+  - Alembic migration head: `5fe7bbcf8347` (clean, verified).
+- **Documentation & Tracking:**
+  - Added ADR-019 in `docs/DECISIONS.md`.
+  - Added Section 10 in `docs/ARCHITECTURE.md`.
   - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.
-
-
-
-
-
+## 2026-11-07 — V1.4-M4: Adaptive Goal Planner & Dynamic DAG Modification
+- **Role Alignment:** Lead AI Architect & Development Orchestrator: Gemini. Implementation Engine: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Adaptive goal decomposition, non-templated dynamic task graph generation, runtime DAG modification preserving immutable completed deliverables, closed-loop replanning node, and strict budget limit enforcement (M1.4-4 / TR-05).
+- **Core Architecture & Implementation:**
+  - **Database Schema Migration (`5fe7bbcf8347`):**
+    - Created and applied Alembic migration `5fe7bbcf8347_add_project_goals_and_replan_tracking.py`.
+    - Added `project_goals` table with composite index `ix_project_goals_project_status`.
+    - Added `workflow_executions.goal_id` foreign key and `replan_count` counter column.
+  - **Goal Domain Modeling & Services (`goal.py`, `goal_service.py`):**
+    - Added `ProjectGoal` SQLAlchemy model and Pydantic schemas (`GoalCreate`, `GoalUpdate`, `GoalRead`).
+    - Implemented `GoalService` CRUD and `recalculate_progress` with automatic status transition to `ACHIEVED` when progress reaches 100%.
+  - **Autonomous Goal Decomposition (`GoalDecomposer` in `planner.py`):**
+    - Prompts Claude Haiku 5.5 to synthesize tailored execution DAGs from arbitrary natural-language project goals.
+    - Ingests project memory context into the decomposition prompt for contextual alignment.
+    - Validates synthesized DAGs via Kahn's algorithm; falls back gracefully to standard template on parse or acyclicity failures.
+  - **Runtime DAG Modification Invariant (`DAGModifier` in `planner.py`):**
+    - Enforces strict immutability of completed tasks: completed task IDs, outputs, and terminal status cannot be overwritten or deleted.
+    - Replaces unexecuted tasks with revised plan (`replace_unexecuted=True`).
+    - Re-validates composite graph acyclicity via Kahn's algorithm before execution.
+  - **Closed-Loop Replanning Node (`backend/app/orchestrator/workflow_graph.py`):**
+    - Integrated `replan_node` into LangGraph state graph with conditional edge routing: `route_after_verify` (`remediation`, `replan`, `artifact`) and `route_after_replan` (`approval_check`, `__end__`).
+    - Enforces 2-replan limit ceiling via `BudgetGovernor.record_replan(db, execution_id)`.
+    - Emits `workflow_replan` telemetry event with iteration count, reason, and task counts.
+  - **REST API & Frontend Client:**
+    - Added `/api/v1/projects/{project_id}/goals` CRUD and `/execute` trigger endpoints.
+    - Added operator-authorized `POST /api/v1/executions/{execution_id}/replan` endpoint.
+    - Updated frontend API client (`client.ts`) and TypeScript types (`api.ts`).
+- **Verification & Acceptance:**
+  - Created `backend/tests/test_v1_4_adaptive_planning.py` with 7 comprehensive tests (7/7 passed).
+  - Full backend pytest suite: **175/175 tests passed** in 31.96s.
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 103 backend files.
+  - Frontend Vitest suite: 9/9 test files (16 tests) passed in 1.47s; Vite build clean in 167ms.
+  - Alembic migration head: `5fe7bbcf8347` (clean, verified).
+- **Documentation & Tracking:**
+  - Added ADR-019 in `docs/DECISIONS.md`.
+  - Added Section 10 in `docs/ARCHITECTURE.md`.
+  - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.
 
 

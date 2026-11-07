@@ -12,6 +12,7 @@ from app.db.base import Base, TimestampMixin, UUIDMixin
 if TYPE_CHECKING:
     from app.models.approval import Approval
     from app.models.artifact import Artifact
+    from app.models.goal import ProjectGoal
     from app.models.project import Project
     from app.models.usage import ModelExecution
     from app.models.workflow import Workflow
@@ -50,6 +51,13 @@ class WorkflowExecution(Base, UUIDMixin, TimestampMixin):
     )
     current_step: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     remediation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    replan_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    goal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("project_goals.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     state_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     checkpoint_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -59,6 +67,7 @@ class WorkflowExecution(Base, UUIDMixin, TimestampMixin):
     # Relationships
     workflow: Mapped["Workflow"] = relationship("Workflow", back_populates="executions")
     project: Mapped["Project"] = relationship("Project", back_populates="executions")
+    goal: Mapped["ProjectGoal | None"] = relationship("ProjectGoal", back_populates="executions")
     events: Mapped[list["ExecutionEvent"]] = relationship(
         "ExecutionEvent", back_populates="execution", cascade="all, delete-orphan"
     )

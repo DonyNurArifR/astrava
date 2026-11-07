@@ -6,6 +6,8 @@ import type {
   BudgetLimitsUpdate,
   BudgetSummary,
   Execution,
+  GoalCreate,
+  GoalUpdate,
   MemoryAuditLog,
   MemoryConflictItem,
   MemoryStats,
@@ -13,6 +15,7 @@ import type {
   ObjectiveUnderstanding,
   PaginatedResponse,
   Project,
+  ProjectGoal,
   ProjectMemory,
   ProjectStats,
   RemediationSummary,
@@ -318,4 +321,36 @@ export const api = {
     fetch(`${API_BASE}/projects/${projectId}/artifacts/${artifactId}/lineage`).then(r =>
       handleResponse<ArtifactLineage>(r)
     ),
+
+  // Goals & Adaptive Replanning (M1.4-4)
+  getProjectGoals: (projectId: string, status?: string) =>
+    fetch(`${API_BASE}/projects/${projectId}/goals${status ? `?status=${status}` : ''}`).then(r =>
+      handleResponse<ProjectGoal[]>(r)
+    ),
+
+  createProjectGoal: (projectId: string, data: GoalCreate) =>
+    fetch(`${API_BASE}/projects/${projectId}/goals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).then(r => handleResponse<ProjectGoal>(r)),
+
+  updateProjectGoal: (projectId: string, goalId: string, data: GoalUpdate) =>
+    fetch(`${API_BASE}/projects/${projectId}/goals/${goalId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).then(r => handleResponse<ProjectGoal>(r)),
+
+  executeGoal: (projectId: string, goalId: string) =>
+    fetch(`${API_BASE}/projects/${projectId}/goals/${goalId}/execute`, {
+      method: 'POST',
+    }).then(r => handleResponse<Execution>(r)),
+
+  replanExecution: (executionId: string, data: { reason: string; new_tasks?: any[] }) =>
+    fetch(`${API_BASE}/executions/${executionId}/replan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).then(r => handleResponse<Execution>(r)),
 };

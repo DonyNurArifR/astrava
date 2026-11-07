@@ -11,6 +11,7 @@ from app.db.base import Base, TimestampMixin, UUIDMixin
 if TYPE_CHECKING:
     from app.models.artifact import Artifact
     from app.models.execution import WorkflowExecution
+    from app.models.goal import ProjectGoal
     from app.models.task import Task
     from app.models.workflow import Workflow
     from app.models.workspace import Workspace
@@ -68,4 +69,7 @@ class Project(Base, UUIDMixin, TimestampMixin):
     )
     artifacts: Mapped[list["Artifact"]] = relationship(
         "Artifact", back_populates="project", cascade="all, delete-orphan"
+    )
+    goals: Mapped[list["ProjectGoal"]] = relationship(
+        "ProjectGoal", back_populates="project", cascade="all, delete-orphan"
     )

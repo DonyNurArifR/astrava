@@ -31,6 +31,8 @@ class ExecutionRead(ExecutionBase):
     status: ExecutionStatus
     current_step: int
     remediation_count: int = 0
+    replan_count: int = 0
+    goal_id: uuid.UUID | None = None
     state_data: dict[str, Any]
     checkpoint_id: str | None = None
     started_at: datetime | None = None
@@ -40,9 +42,10 @@ class ExecutionRead(ExecutionBase):
     updated_at: datetime
     events: list[ExecutionEventRead] = []
 
-    @field_validator("remediation_count", mode="before")
+    @field_validator("remediation_count", "replan_count", mode="before")
     @classmethod
-    def default_remediation_count(cls, v: Any) -> int:
+    def default_int_counts(cls, v: Any) -> int:
+        return v if v is not None else 0
         return v if v is not None else 0
 
     model_config = ConfigDict(from_attributes=True)

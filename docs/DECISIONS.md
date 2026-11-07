@@ -143,10 +143,16 @@
   3. *Deterministic 3-Cycle Remediation Cap:* Strict bounding at 3 remediation cycles per task. Tasks failing verification after 3 cycles are permanently marked `failed` and halted from re-entering remediation, preventing infinite loops.
   4. *Centralized Budget Governance Integration:* Added `BudgetGovernor.record_remediation_turn(db, execution_id)` tracking against `max_remediation_turns`. Reaching the limit transitions budget to `EXHAUSTED` and cleanly terminates the pipeline without corruption.
   5. *Persistence & Audit Observability:* Added `remediation_history_json` to `tasks` table and `remediation_count` to `workflow_executions`. Exposed `GET /api/v1/executions/{id}/remediations` returning complete cycle history and diagnostics. Added frontend inspector badge and drawer in `ExecutionsPage.tsx`.
-- **Consequences:** Intelligently self-correcting agent pipelines; eliminate blind retries; deterministic cycle and budget bounding; comprehensive auditability across all self-correction attempts.
-
-
-
+- **Consequences:** Intelligently self-correcting agent pipelines; eliminate blind retries; deterministic cycle and budget bounding; comprehensive auditability across all self-correction attempts.## ADR-019: Adaptive Goal Decomposition & Dynamic DAG Replanning (M1.4-4)
+- **Status:** Accepted
+- **Context:** Hardcoded 6-stage workflow templates constrain ASTRAVA to fixed execution topologies that cannot adapt to non-standard project objectives, dynamic real-world feedback, or mid-pipeline discoveries. Autonomous intelligence requires flexible goal decomposition and dynamic graph modification while safeguarding completed deliverables and resource limits.
+- **Decision:**
+  1. *Autonomous Goal Decomposition (`GoalDecomposer`):* Utilize Claude Haiku 5.5 to synthesize tailored execution DAGs from arbitrary natural-language project goals and studio types. Pass project retrieval context (memory) directly into the decomposition prompt. Validate all generated graphs using Kahn's topological sort algorithm (`PlannerService.validate_and_compute_stages`), falling back deterministically to the proven 6-stage template on syntax or acyclicity failures.
+  2. *Runtime DAG Modification Invariants (`DAGModifier`):* Strictly preserve all tasks in `completed` status as immutable ground truth. When new plans are supplied, replace unexecuted tasks (`replace_unexecuted=True`) while verifying the composite graph remains a valid, cycle-free DAG before execution.
+  3. *Closed-Loop Replanning Node (`replan_node`):* Integrate dynamic replanning as a first-class LangGraph node. When verification identifies structural impediments, route to `replan_node` to update remaining workflow tasks.
+  4. *Budget Ceiling & Guardrails (2-Replan Limit):* Restrict executions to a strict maximum of 2 replan iterations enforced centrally via `BudgetGovernor.record_replan(db, execution_id)`. Exceeding this limit halts replanning and cleanly transitions the workflow to its terminal state.
+  5. *Persistence & REST API:* Add `project_goals` table with progress tracking, link executions via `workflow_executions.goal_id`, and track iterations via `replan_count`. Expose goal CRUD endpoints (`/api/v1/projects/{project_id}/goals`), goal execution trigger (`/execute`), and an authenticated manual replanning endpoint (`/api/v1/executions/{execution_id}/replan`).
+- **Consequences:** Eliminates static template limitations; supports arbitrary non-standard workflows; protects completed work from rollback or overwriting; prevents infinite replanning loops with strict budget bounding; provides comprehensive relational and API visibility for goal-driven pipelines.
 
 
 

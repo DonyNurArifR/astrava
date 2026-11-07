@@ -114,5 +114,11 @@
 | V1.4-M3-T5 | V1.4 | Budget Governor Remediation Turn Integration | COMPLETE | `backend/app/services/budget_governor.py` | `record_remediation_turn()` tracking against `max_remediation_turns`; halts pipeline on exhaustion with `EXHAUSTED` status |
 | V1.4-M3-T6 | V1.4 | Remediation REST API & Frontend Inspector | COMPLETE | `app/api/v1/executions.py`, `ExecutionsPage.tsx` | `GET /executions/{id}/remediations` endpoint, interactive drawer with diagnostic review, 16/16 vitest passing, clean build |
 | V1.4-M3-T7 | V1.4 | Full Remediation & Regression Test Suite | COMPLETE | `test_v1_4_automated_remediation.py`, `tests/` | 7/7 remediation tests passing; full backend suite 168/168 passing in 29.12s; 0 ruff errors |
-
+| V1.4-M4-T1 | V1.4 | Database Schema Migration (`5fe7bbcf8347`) | COMPLETE | `backend/alembic/versions/5fe7bbcf8347_...` | Added `project_goals` table, `workflow_executions.goal_id`, `workflow_executions.replan_count`; verified upgrade/downgrade roundtrip |
+| V1.4-M4-T2 | V1.4 | Goal Models, Schemas & GoalService CRUD | COMPLETE | `goal.py` (models/schemas), `goal_service.py` | Full asynchronous goal management with automatic progress recalculation and status transition to `ACHIEVED` |
+| V1.4-M4-T3 | V1.4 | Autonomous Goal Decomposition (`GoalDecomposer`) | COMPLETE | `backend/app/orchestrator/planner.py` | LLM dynamic DAG synthesis via Claude Haiku 5.5, Kahn's algorithm acyclicity validation, deterministic template fallback |
+| V1.4-M4-T4 | V1.4 | Runtime Dynamic DAG Modification (`DAGModifier`) | COMPLETE | `backend/app/orchestrator/planner.py` | Immutable completed task preservation invariant, unexecuted task replacement, composite DAG topological re-validation |
+| V1.4-M4-T5 | V1.4 | Closed-Loop `replan_node` & Budget Ceiling Guardrail | COMPLETE | `backend/app/orchestrator/workflow_graph.py` | LangGraph `replan_node`, 2-replan ceiling enforced via `BudgetGovernor.record_replan()`, workflow telemetry event logging |
+| V1.4-M4-T6 | V1.4 | Goal & Replanning REST APIs & Frontend Client | COMPLETE | `goals.py`, `executions.py`, `client.ts`, `types/api.ts` | Goal CRUD, goal execution trigger, operator-authorized replanning endpoint, full frontend TypeScript bindings |
+| V1.4-M4-T7 | V1.4 | Adaptive Planning & Regression Test Suite | COMPLETE | `test_v1_4_adaptive_planning.py`, `tests/` | 7/7 adaptive planning tests passing; full backend suite 175/175 passing; 16/16 frontend vitest passing; clean Vite build |
 

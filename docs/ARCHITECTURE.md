@@ -456,8 +456,37 @@ The LangGraph workflow state machine integrates automated remediation between ve
 - **REST API:**
   - `GET /api/v1/executions/{execution_id}/remediations`: Returns `RemediationSummaryResponse` detailing total remediations, affected tasks, and complete cycle-by-cycle diagnostic records.
 - **Frontend Observability:**
-  - `ExecutionsPage.tsx` displays remediation status badges with cycle counts and provides an interactive remediation inspector drawer showing diagnostics, unmet criteria, and suggestions.
+  - `ExecutionsPage.tsx` displays remediation status badges with cycle counts and provides an interactive remediation inspector drawer showing diagnostics, unmet criteria, and suggestions.---
 
+## 10. V1.4 Adaptive Goal Planner & Dynamic DAG Modification (M1.4-4)
 
+### 10.1 Autonomous Goal Decomposition (`GoalDecomposer`)
+To move beyond static workflow templates, ASTRAVA incorporates adaptive goal decomposition driven by Claude Haiku 5.5:
+- **Dynamic Task Graph Synthesis:** Given a high-level project objective and studio type (SaaS or Media), `GoalDecomposer.decompose_goal` prompts Claude to synthesize a non-templated directed acyclic graph (DAG) of `PlannedTask` instances.
+- **Topological Validation via Kahn's Algorithm:** Every synthesized plan is validated using `PlannerService.validate_and_compute_stages()`. If any cycle or missing dependency is detected, or if dynamic synthesis fails, the planner falls back deterministically to the proven 6-stage template.
+- **Project Retrieval Context Injection:** Ingested memory context is passed directly into the goal decomposition prompt, allowing the planner to reference past decisions and project-specific conventions.
+
+### 10.2 Runtime Dynamic DAG Modification (`DAGModifier`)
+ASTRAVA supports mid-flight structural adjustments to execution plans:
+- **Strict Immutability of Completed Work:** Tasks already in `completed` status are strictly preserved. Their IDs, titles, outputs, and terminal states cannot be modified or deleted during replanning.
+- **Unexecuted Task Replacement:** Unexecuted/pending tasks are superseded by the new or revised task definitions (`replace_unexecuted=True`).
+- **Acyclicity and Dependency Integrity:** Modified graphs are re-verified via Kahn's algorithm before execution. If invalid dependencies or cycles are introduced, the modification is rejected with a descriptive error.
+
+### 10.3 Closed-Loop Replanning Node (`replan_node`)
+Integrated within the LangGraph state graph between verification and execution:
+- **Autonomous Replanning Trigger:** When verification detects structural impediments or evaluation findings warranting a change of direction, `replan_needed` triggers routing to `replan_node`.
+- **Ceiling Guardrails (2-Replan Limit):** Centralized budget governance strictly enforces a hard ceiling of 2 replans per execution via `BudgetGovernor.record_replan()`. If an execution attempts a 3rd replan, `BudgetExhaustedError` is raised and the workflow transitions gracefully to terminal state.
+- **Telemetry Event Tracking:** Every replan logs a `workflow_replan` event recording iteration index, reason, completed task counts, and updated task counts.
+
+### 10.4 Relational Persistence & REST API
+- **Database Schema Migration (`5fe7bbcf8347`):**
+  - Added `project_goals` table tracking high-level goals with `status` (`active`, `achieved`, `paused`, `cancelled`), `target_date`, `progress_percentage`, and `metrics_json`.
+  - Added `workflow_executions.goal_id` foreign key referencing `project_goals.id`.
+  - Added `workflow_executions.replan_count` (`Integer`, default 0).
+- **REST Endpoints:**
+  - `POST /api/v1/projects/{project_id}/goals`: Create a project goal.
+  - `GET /api/v1/projects/{project_id}/goals`: List project goals.
+  - `POST /api/v1/projects/{project_id}/goals/{goal_id}/execute`: Trigger workflow execution targeting a goal.
+  - `POST /api/v1/executions/{execution_id}/replan`: Operator-authenticated manual replan endpoint with budget ceiling verification.
 
 

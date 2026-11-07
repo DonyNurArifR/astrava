@@ -23,7 +23,7 @@ from app.orchestrator.knowledge_extraction import (
     KnowledgeExtractor,
     compute_candidate_fingerprint,
 )
-from app.orchestrator.planner import PlannerService
+from app.orchestrator.planner import DAGModifier, GoalDecomposer
 from app.orchestrator.state import OrchestrationState
 from app.providers.base import ProviderRequest, ProviderStatus
 from app.providers.factory import ProviderFactory
@@ -31,6 +31,7 @@ from app.services.agent_service import DEFAULT_AGENTS
 from app.services.budget_governor import (
     BudgetExhaustedError,
     BudgetGovernor,
+    BudgetLimitExceededError,
     FencingTokenMismatchError,
     ReservationNotFoundError,
 )
@@ -182,9 +183,9 @@ async def plan_node(state: OrchestrationState) -> dict[str, Any]:
     studio_type_str = state.get("studio_type", "saas")
     studio_type = StudioType.MEDIA if studio_type_str == "media" else StudioType.SAAS
 
-    plan = PlannerService.generate_plan(
-        project_id=state.get("project_id", "default"),
+    plan = await GoalDecomposer.decompose_goal(
         objective=state.get("objective", ""),
+        project_id=state.get("project_id", "default"),
         studio_type=studio_type,
         retrieval_context=state.get("retrieval_context"),
     )
@@ -1035,6 +1036,108 @@ async def remediation_node(state: OrchestrationState) -> dict[str, Any]:
     }
 
 
+async def replan_node(state: OrchestrationState) -> dict[str, Any]:
+    execution_id_str = state.get("execution_id")
+    current_replan_count = state.get("replan_count", 0)
+    replan_reason = (
+        state.get("replan_reason") or "Adaptive DAG replanning triggered by evaluation findings."
+    )
+    logger.info(
+        "Executing replan_node (iteration %d) for execution %s: %s",
+        current_replan_count + 1,
+        execution_id_str,
+        replan_reason,
+    )
+
+    # 1. Budget Governor replan turn check and enforcement
+    if execution_id_str:
+        try:
+            exec_uuid = uuid.UUID(execution_id_str)
+            async with AsyncSessionLocal() as session:
+                await BudgetGovernor.record_replan(session, exec_uuid)
+                await session.commit()
+        except (BudgetExhaustedError, BudgetLimitExceededError) as exc:
+            msg = f"Replanning halted: {exc}"
+            logger.warning("Replan refused for execution %s: %s", execution_id_str, exc)
+            return {
+                "status": "failed",
+                "error": msg,
+                "error_message": msg,
+                "budget_exhausted": True,
+                "replan_needed": False,
+            }
+
+    # 2. Replan remaining unexecuted tasks using DAGModifier
+    current_tasks = state.get("tasks", [])
+    completed_ids = state.get("completed_task_ids", [])
+    failed_ids = state.get("failed_task_ids", [])
+
+    new_tasks = state.get("new_tasks_for_replan")
+    if not new_tasks:
+        studio_type_str = state.get("studio_type", "saas")
+        studio_type = StudioType.MEDIA if studio_type_str == "media" else StudioType.SAAS
+        adapted_plan = await GoalDecomposer.decompose_goal(
+            objective=f"{state.get('objective', '')} (Replanning note: {replan_reason})",
+            project_id=state.get("project_id", "default"),
+            studio_type=studio_type,
+            retrieval_context=state.get("retrieval_context"),
+        )
+        new_tasks = [t.model_dump() for t in adapted_plan.tasks]
+
+    try:
+        updated_tasks = DAGModifier.modify_dag(
+            current_tasks=current_tasks,
+            completed_task_ids=completed_ids,
+            failed_task_ids=failed_ids,
+            new_or_modified_tasks=new_tasks,
+        )
+    except Exception as exc:
+        logger.error("DAG modification failed: %s", exc)
+        return {
+            "status": "failed",
+            "error": f"Invalid replan DAG: {exc}",
+            "error_message": f"Invalid replan DAG: {exc}",
+            "replan_needed": False,
+        }
+
+    # Record telemetry event
+    replan_record = {
+        "replan_count": current_replan_count + 1,
+        "reason": replan_reason,
+        "completed_task_count": len(completed_ids),
+        "total_task_count": len(updated_tasks),
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    replan_records = list(state.get("replan_records", []))
+    replan_records.append(replan_record)
+
+    if execution_id_str:
+        try:
+            exec_uuid = uuid.UUID(execution_id_str)
+            async with AsyncSessionLocal() as session:
+                await WorkflowService.record_event(
+                    session,
+                    exec_uuid,
+                    "execution_replan",
+                    replan_record,
+                )
+                execution = await WorkflowService.get_execution(session, exec_uuid)
+                if execution:
+                    execution.replan_count = current_replan_count + 1
+                await session.commit()
+        except Exception:
+            pass
+
+    return {
+        "tasks": updated_tasks,
+        "replan_count": current_replan_count + 1,
+        "replan_needed": False,
+        "replan_reason": None,
+        "replan_records": replan_records,
+        "status": "running",
+    }
+
+
 async def artifact_node(state: OrchestrationState) -> dict[str, Any]:
     tasks = state.get("tasks", [])
     ready_ids = state.get("current_ready_task_ids", [])
@@ -1404,10 +1507,22 @@ def route_after_dispatch(state: OrchestrationState) -> Literal["verify", "__end_
     return "verify"
 
 
-def route_after_verify(state: OrchestrationState) -> Literal["remediation", "artifact"]:
+def route_after_verify(
+    state: OrchestrationState,
+) -> Literal["remediation", "replan", "artifact"]:
     if state.get("remediation_needed"):
         return "remediation"
+    if state.get("replan_needed"):
+        return "replan"
     return "artifact"
+
+
+def route_after_replan(
+    state: OrchestrationState,
+) -> Literal["approval_check", "__end__"]:
+    if state.get("budget_exhausted") or state.get("status") == "failed":
+        return "__end__"
+    return "approval_check"
 
 
 def route_after_remediation(state: OrchestrationState) -> Literal["dispatch_task", "__end__"]:
@@ -1441,6 +1556,7 @@ def build_orchestrator_graph():
     workflow.add_node("dispatch_task", dispatch_task_node)
     workflow.add_node("verify", verify_node)
     workflow.add_node("remediation", remediation_node)
+    workflow.add_node("replan", replan_node)
     workflow.add_node("artifact", artifact_node)
     workflow.add_node("ingest_knowledge", ingest_knowledge_node)
     workflow.add_node("complete", complete_node)
@@ -1472,7 +1588,17 @@ def build_orchestrator_graph():
         route_after_verify,
         {
             "remediation": "remediation",
+            "replan": "replan",
             "artifact": "artifact",
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "replan",
+        route_after_replan,
+        {
+            "approval_check": "approval_check",
+            "__end__": END,
         },
     )
 

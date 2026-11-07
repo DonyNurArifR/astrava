@@ -55,6 +55,7 @@ class ExecutePipelineRequest(BaseModel):
         description="Target goal or requirements for autonomous pipeline execution",
     )
     studio_type: StudioType = StudioType.SAAS
+    goal_id: uuid.UUID | None = None
 
     @field_validator("objective")
     @classmethod
@@ -95,6 +96,7 @@ async def execute_pipeline(
         project_id=req.project_id,
         objective=req.objective,
         studio_type=req.studio_type.value,
+        goal_id=req.goal_id,
     )
     return ExecutionRead.model_validate(execution)
 

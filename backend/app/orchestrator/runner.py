@@ -40,6 +40,7 @@ class OrchestrationRunner:
         project_id: uuid.UUID,
         objective: str,
         studio_type: str = "saas",
+        goal_id: uuid.UUID | None = None,
     ) -> WorkflowExecution:
         # 1. Create or retrieve active workflow
         wf_data = WorkflowCreate(
@@ -56,22 +57,33 @@ class OrchestrationRunner:
         workflow = await WorkflowService.create_workflow(db, wf_data)
 
         # 2. Create execution entry
+        exec_init_state = {
+            "objective": objective,
+            "studio_type": studio_type,
+        }
+        if goal_id:
+            exec_init_state["goal_id"] = str(goal_id)
+
         exec_data = ExecutionCreate(
             workflow_id=workflow.id,
             project_id=project_id,
-            initial_state={
-                "objective": objective,
-                "studio_type": studio_type,
-            },
+            initial_state=exec_init_state,
         )
         execution = await WorkflowService.create_execution(db, exec_data)
+        if goal_id:
+            execution.goal_id = goal_id
+            await db.flush()
         await BudgetGovernor.initialize_budget(db, execution.id, project_id)
         await WorkflowService.update_execution_status(db, execution.id, ExecutionStatus.RUNNING)
         await WorkflowService.record_event(
             db,
             execution.id,
             "pipeline_started",
-            {"objective": objective, "studio_type": studio_type},
+            {
+                "objective": objective,
+                "studio_type": studio_type,
+                "goal_id": str(goal_id) if goal_id else None,
+            },
         )
 
         # Capture immutable agent configuration snapshot for reproducible execution
@@ -101,6 +113,7 @@ class OrchestrationRunner:
             "project_id": str(project_id),
             "objective": objective,
             "studio_type": studio_type,
+            "goal_id": str(goal_id) if goal_id else None,
             "agent_snapshots": agent_snapshots,
             "tasks": [],
             "completed_task_ids": [],

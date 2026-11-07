@@ -10,6 +10,7 @@ from app.models.budget import (
     ExecutionBudget,
 )
 from app.models.execution import ExecutionEvent, ExecutionStatus, WorkflowExecution
+from app.models.goal import GoalStatus, ProjectGoal
 from app.models.memory import (
     MemoryAuditAction,
     MemoryAuditLog,
@@ -41,6 +42,8 @@ __all__ = [
     "Workflow",
     "WorkflowStatus",
     "WorkflowExecution",
+    "ProjectGoal",
+    "GoalStatus",
     "ExecutionStatus",
     "ExecutionEvent",
     "Approval",

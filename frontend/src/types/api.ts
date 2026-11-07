@@ -52,6 +52,8 @@ export interface Execution {
   status: ExecutionStatus;
   current_step: number;
   remediation_count?: number;
+  replan_count?: number;
+  goal_id?: string | null;
   state_data: Record<string, any>;
   checkpoint_id: string | null;
   started_at: string | null;
@@ -378,4 +380,32 @@ export interface RemediationSummary {
   total_remediations: number;
   tasks_affected: string[];
   cycles: RemediationCycle[];
+}
+
+export type GoalStatus = "active" | "achieved" | "paused" | "cancelled";
+
+export interface ProjectGoal {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string;
+  status: GoalStatus;
+  target_criteria: string[];
+  progress_percentage: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GoalCreate {
+  title: string;
+  description: string;
+  target_criteria?: string[];
+}
+
+export interface GoalUpdate {
+  title?: string;
+  description?: string;
+  status?: GoalStatus;
+  target_criteria?: string[];
+  progress_percentage?: number;
 }

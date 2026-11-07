@@ -9,6 +9,7 @@ from app.api.v1.approvals import router as approvals_router
 from app.api.v1.artifacts import project_artifacts_router
 from app.api.v1.artifacts import router as artifacts_router
 from app.api.v1.executions import router as executions_router
+from app.api.v1.goals import router as goals_router
 from app.api.v1.health import router as health_router
 from app.api.v1.intelligence import router as intelligence_router
 from app.api.v1.memories import router as memories_router
@@ -67,6 +68,7 @@ app.include_router(approvals_router, prefix="/api/v1")
 app.include_router(artifacts_router, prefix="/api/v1")
 app.include_router(project_artifacts_router, prefix="/api/v1")
 app.include_router(memories_router, prefix="/api/v1")
+app.include_router(goals_router, prefix="/api/v1")
 app.include_router(intelligence_router, prefix="/api/v1")
 
 
