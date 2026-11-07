@@ -62,3 +62,21 @@ Historical product-delivery log (M0 to V1.4 and the M1.5-1a summary): `docs/EXEC
 - **Claude finding (see next entries):** M1.5-1a was already implemented, independently reviewed, committed and pushed as `02edb00`. It will be re-verified, not re-implemented; no later milestone is started.
 - Pre-commit change disclosed: protocol section 6.3 now treats a descendant commit that touches only recovery files as non-stale (a snapshot cannot contain the hash of the commit that stores it); `AGENT_STATE.md` sections 1, 11, 12 updated to match.
 
+### [18:55] CLAUDE — COMMIT+PUSH: recovery documents (`2fb864b`)
+- Operator-approved docs-only commit of exactly eight files (6 new at repo root, 2 edited in `docs/`). Verified before committing: branch `main`, HEAD equal to `origin/main`, file set equal to `AGENT_STATE.md` section 11, staged list and non-doc check, no secrets, five V1.5 planning baseline documents untouched (`git diff HEAD` empty). Stale line in `docs/AUTONOMOUS_EXECUTION_STATE.md` ("16 of 33 mutating routes unauthenticated") corrected before staging.
+- **Evidence:** `git show --stat 2fb864b` (8 files, +335/−9); push `02edb00..2fb864b`; HEAD equals `origin/main`; working tree clean.
+
+### [19:0x, written with CP-002] CLAUDE — IMPLEMENT: Agy reset from accept-edits to prompt mode
+- Cycled the live Agy session with `shift+tab` (accept-edits → auto → plan → no label = default). No global configuration changed.
+- **Evidence:** footer shows no mode label; functional probe: Agy asked to create `.agy_mode_probe.txt` and Herdr/Agy raised "Allow creation of this file?"; denied with `esc`; the file does not exist and `git status` is clean. Named-file assignments and single-writer rules are unchanged.
+
+### [19:01] CLAUDE+AGY — VALIDATE: M1.5-1a re-verification (operator asked to "resume M1.5-1a")
+- Finding: M1.5-1a is **already implemented, independently reviewed, committed and pushed** (`02edb00`). The operator's premise that it was not implemented was reconciled by re-verifying, not re-implementing; no later milestone started and nothing was added to the product.
+- Claude re-ran every check at HEAD `2fb864b`: backend 522 passed, ruff check and format clean, Alembic head `6db676dd20fd`, frontend 50 passed, oxlint 0 errors / 14 baseline warnings, tsc + vite build clean, frontend source and bundle free of operator-key references.
+- Agy (read-only, prompt mode, each read approved individually) checked R1-R11 and S1-S10 against the committed code: all MET. Claude spot-checked citations: conclusions confirmed, some line numbers approximate (e.g. cited `main.py:57` is the redoc line; the dependency is a few lines away).
+- Observations (not defects): failed logins logged not persisted; `is_authorized_verifier` always true for an authenticated caller; auth overhead not measured. Left for the operator.
+- Roadmap graph note: M1.5-1b and M1.5-1c list M1.5-0 as predecessor. Earlier statements calling them "dependency-ready" were loose; their content is independent of D1, but strictly they need M1.5-0 (docs-only decision record) or an operator waiver.
+
+### [19:01] CLAUDE — HANDOVER: checkpoint CP-002 written (uncommitted)
+- `AGENT_STATE.md` and this log updated; checkpoint commit `2fb864b` (docs-only descendant of `02edb00`). **Next:** operator approval to commit CP-002 and to choose the next milestone. No agent has work in flight.
+
