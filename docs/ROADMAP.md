@@ -1,7 +1,7 @@
 # ASTRAVA Development Roadmap
-**Version:** 1.2.1  
+**Version:** 1.4  
 **Product:** ASTRAVA — AI Creation and Orchestration Platform ("From vision to execution.")  
-**Overall Status:** V1.2.1 MULTI-AGENT RELIABILITY & QUALITY ASSURANCE VERIFIED & DELIVERED
+**Overall Status:** V1.4 NEXT-GENERATION AUTONOMOUS INTELLIGENCE COMPLETE & FROZEN
 
 ---
 
@@ -34,6 +34,6 @@
 | **V1.4-M5** | Repository Context & Git Worktree Sandboxing | **COMPLETE** | Structural repository scanner (`RepoScanner`), ephemeral Git worktree sandboxing per execution (`astrava/exec-<id>`), automated atomic branch commit & prune, git diff and operator merge endpoints, and zero working tree contamination. 182/182 backend tests passing. |
 | **V1.4-M6** | Agent Capability Matching & Observability | **COMPLETE** | Formal capability declarations (`PlannedTask.required_capabilities`), dynamic capability-based dispatch (`CapabilityMatcher`), agent performance metrics service, REST observability endpoints, and UI KPI cards. 187/187 backend tests passing. |
 | **V1.4-M7** | Frontend Autonomous Intelligence Experience | **COMPLETE** | Goals dashboard (`GoalsPage.tsx`) for strategic objective definition and 1-click execution; Worktree sandboxing card with interactive Git Diff viewer and operator merge action; expanded Vitest suite (20/20 passing). |
-| **V1.4-M8** | Final V1.4 End-to-End Acceptance & Verification | **PLANNED** | Full platform autonomous mission proof, comprehensive integration verification, performance profiling, and V1.4 final release freeze. |
+| **V1.4-M8** | Final V1.4 End-to-End Acceptance & Verification | **COMPLETE** | Full platform autonomous mission proof, comprehensive integration verification, performance profiling, and V1.4 final release freeze. |
 
 

@@ -907,4 +907,30 @@
   - Added Section 13 in `docs/ARCHITECTURE.md`.
   - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.
 
+## 2026-11-07 — V1.4-M8: Final V1.4 End-to-End Acceptance & Delivery Freeze
+- **Role Alignment:** Lead AI Architect & Development Orchestrator: Gemini. Implementation Engine: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Execute comprehensive end-to-end integration acceptance testing, resource ceiling verification, multiprocess lease reclamation proof, full regression test suites, and produce the final V1.4 acceptance report and baseline freeze (M1.4-8).
+- **Core Verification & Implementation:**
+  - **Comprehensive End-to-End Acceptance Suite (`test_v1_4_e2e_acceptance.py`):**
+    - `test_v1_4_full_autonomous_mission_lifecycle`: Real Git repository initialization, structural scan with toolchain discovery, project goal creation, autonomous goal execution, worktree sandboxing (`astrava/exec-<id>`), initial defect detection, closed-loop remediation (`remediation_node`) with self-correction, worktree branch commit, SHA-256 fingerprint deduplication on knowledge ingestion, diff inspection (`diff_text`), operator merge to `main`, and goal progress reaching 100% `achieved`.
+    - `test_v1_4_budget_ceiling_prevents_infinite_remediation`: Bounded remediation turn limit (`max_remediation_turns`) halts runaway pipelines cleanly with `BudgetExhaustedError` and `status = 'exhausted'`.
+    - `test_v1_4_multiprocess_recovery_and_zombie_lease_reclamation`: Expired leases reclaimed upon resume; stale worker reconciliation rejected with `ReservationNotFoundError`; invalid fencing token rejected with `FencingTokenMismatchError`.
+    - `test_v1_4_concurrent_memory_fingerprint_deduplication`: PostgreSQL partial unique index `uix_project_memories_active_fingerprint` raises `IntegrityError` on concurrent duplicate active fingerprint ingestion.
+  - **Goal Progress Recalculation:**
+    - Updated `backend/app/api/v1/goals.py` `list_goals` to recalculate progress dynamically for listed goals.
+  - **Storage & Worktree Hygiene:**
+    - Configured `.gitignore` to exclude `storage/worktrees/*` while retaining `!storage/worktrees/.gitkeep`.
+- **Verification Evidence:**
+  - Backend Pytest Suite: **191/191 tests passed** in 33.09s (100% pass rate).
+  - Frontend Vitest Suite: **20/20 tests passed** across 10 test files in 1.32s (100% pass rate).
+  - TypeScript: 0 compilation errors (`tsc -b`), Vite production build clean in 206ms.
+  - Code Hygiene: `ruff check` and `ruff format` 100% clean across all 110 backend Python files.
+  - Alembic Migration Head: `6db676dd20fd` (verified against PostgreSQL 16 on port 5433).
+- **Documentation & Tracking:**
+  - Added ADR-023 in `docs/DECISIONS.md`.
+  - Created `docs/V1_4_FINAL_ACCEPTANCE_REPORT.md`.
+  - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.
+  - Baseline declared **COMPLETE AND FROZEN**.
+
+
 

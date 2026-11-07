@@ -41,6 +41,8 @@ async def list_goals(
         raise HTTPException(status_code=404, detail="Project not found")
 
     goals = await GoalService.list_goals_by_project(db, project_id, status=status_filter)
+    for g in goals:
+        await GoalService.recalculate_progress(db, g.id)
     return [GoalRead.model_validate(g) for g in goals]
 
 

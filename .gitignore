@@ -71,6 +71,8 @@ frontend/out/
 # Local persistent data & artifacts
 storage/artifacts/*
 !storage/artifacts/.gitkeep
+storage/worktrees/*
+!storage/worktrees/.gitkeep
 postgres_data/
 scratch/
 graphify-out/

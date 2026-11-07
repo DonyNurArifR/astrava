@@ -186,6 +186,20 @@
   5. *Test Suite Expansion:* Add `frontend/src/__tests__/GoalsPage.test.tsx` verifying goal rendering, status filtering, modal creation, and execution triggers.
 - **Consequences:** Unifies autonomous intelligence capabilities into an intuitive operator console; provides real-time visibility into goal progress and code changes; guarantees safe, sandboxed code modification with human operator merge control.
 
+## ADR-023: V1.4 Next-Generation Autonomous Intelligence Baseline & Delivery Freeze (M1.4-8)
+- **Status:** Accepted
+- **Context:** Following completion of milestones M1.4-1 through M1.4-7, comprehensive end-to-end acceptance testing, regression suites, and multi-process crash verification were required to ensure the entire V1.4 Next-Generation Autonomous Intelligence platform operates with deterministic reliability, resource boundedness, and zero regressions.
+- **Decision:**
+  1. *End-to-End Acceptance Suite (`test_v1_4_e2e_acceptance.py`):* Implement full lifecycle empirical verification proving:
+     - Real Git repository initialization, structural scan with toolchain discovery, project goal creation, autonomous goal execution, ephemeral worktree sandboxing (`astrava/exec-<id>`), initial defect detection, closed-loop remediation (`remediation_node`) with self-correction, worktree branch commit, SHA-256 fingerprint deduplication on knowledge ingestion, diff inspection (`diff_text`), operator merge to `main`, and goal progress reaching 100% `achieved`.
+     - Bounded remediation turn limit (`max_remediation_turns`) halting runaway pipelines cleanly with `BudgetExhaustedError` and `status = 'exhausted'`.
+     - Multi-process recovery and zombie lease reclamation: expired leases reclaimed upon resume; stale worker reconciliation rejected with `ReservationNotFoundError`; invalid fencing token rejected with `FencingTokenMismatchError`.
+     - Concurrent memory fingerprint deduplication: PostgreSQL partial unique index `uix_project_memories_active_fingerprint` raises `IntegrityError` on concurrent duplicate active fingerprint ingestion.
+  2. *Verification Evidence:* 191/191 backend pytest tests passing; 20/20 frontend vitest tests passing; zero TypeScript compilation errors; clean Vite production build.
+  3. *Delivery Freeze:* Declare ASTRAVA V1.4 complete and freeze the repository baseline.
+- **Consequences:** Formally delivers all V1.4 capabilities, resolves all architectural risks (TR-01 through TR-07), and establishes a certified, frozen baseline for production deployment and future development.
+
+
 
 
 
