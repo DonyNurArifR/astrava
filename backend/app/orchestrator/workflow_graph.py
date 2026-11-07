@@ -313,7 +313,7 @@ async def _execute_single_task(
     task: dict[str, Any],
     state: OrchestrationState,
     project_work_dir: Path,
-    reservation_info: tuple[uuid.UUID, str] | uuid.UUID | None = None,
+    reservation_info: tuple[uuid.UUID, str] | tuple[uuid.UUID, str, int] | uuid.UUID | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Run a task with per-attempt budget reservations and safe fencing."""
     import inspect
@@ -343,7 +343,7 @@ async def _run_single_task(
     task: dict[str, Any],
     state: OrchestrationState,
     project_work_dir: Path,
-    reservation_info: tuple[uuid.UUID, str] | uuid.UUID | None = None,
+    reservation_info: tuple[uuid.UUID, str] | tuple[uuid.UUID, str, int] | uuid.UUID | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """
     Executes a single task using its assigned agent instructions,
@@ -352,8 +352,13 @@ async def _run_single_task(
     """
     init_res_id: uuid.UUID | None = None
     init_fence_token: str | None = None
+    # The attempt number the dispatcher reserved for this call. After a restart (or a remediation
+    # re-dispatch) earlier attempts already exist, so the retry loop must continue from there.
+    start_attempt = 0
     if isinstance(reservation_info, tuple):
-        init_res_id, init_fence_token = reservation_info
+        init_res_id, init_fence_token = reservation_info[0], reservation_info[1]
+        if len(reservation_info) > 2:
+            start_attempt = int(reservation_info[2])
     elif isinstance(reservation_info, uuid.UUID):
         init_res_id = reservation_info
 
@@ -499,8 +504,8 @@ Produce the complete deliverable meeting all criteria directly."""
     success = False
     last_error = "Task execution failed"
 
-    for attempt in range(max_retries + 1):
-        if attempt == 0:
+    for attempt in range(start_attempt, max_retries + 1):
+        if attempt == start_attempt:
             current_res_id = init_res_id
             current_fence = init_fence_token
         else:
@@ -661,7 +666,7 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
     # Reserve budget for the whole wave atomically: any refusal rolls back every
     # reservation in this wave and nothing is dispatched.
     execution_id = uuid.UUID(state["execution_id"])
-    reservations: dict[str, tuple[uuid.UUID, str]] = {}
+    reservations: dict[str, tuple[uuid.UUID, str, int]] = {}
     tasks_to_dispatch: list[dict[str, Any]] = []
     failed_ids = list(state.get("failed_task_ids", []))
 
@@ -813,7 +818,11 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
                     attempt_number=attempt_to_reserve,
                     timeout_seconds=_reservation_timeout_seconds(t, state),
                 )
-                reservations[task_id] = (reservation.id, reservation.fence_token)
+                reservations[task_id] = (
+                    reservation.id,
+                    reservation.fence_token,
+                    attempt_to_reserve,
+                )
                 tasks_to_dispatch.append(t)
             await session.commit()
     except BudgetExhaustedError as exc:

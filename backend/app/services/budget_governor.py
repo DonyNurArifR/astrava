@@ -483,6 +483,76 @@ class BudgetGovernor:
         return await _reclaim_expired(db, budget, datetime.now(UTC))
 
     @staticmethod
+    async def expire_orphaned_reservations(
+        db: AsyncSession, execution_id: uuid.UUID, recovered_by_epoch: int
+    ) -> int:
+        """Force-settle every ACTIVE reservation of an execution whose owner is gone (M1.5-1c).
+
+        Called by a recoverer that has just claimed the execution lease, so no live worker of
+        the previous epoch is entitled to these holds. Each reservation leaves ACTIVE exactly
+        once, with the same conservative charge as lease expiry (the estimate is consumed and the
+        attempt is counted), so recovery can never double count and never leaves a permanent
+        hold. The old worker's fence token stops matching because the status is no longer ACTIVE.
+        Returns how many reservations were settled. Caller commits.
+        """
+        budget = await _lock_budget(db, execution_id=execution_id)
+        if budget is None:
+            return 0
+        now = datetime.now(UTC)
+        active = (
+            (
+                await db.execute(
+                    select(BudgetReservation)
+                    .where(
+                        BudgetReservation.budget_id == budget.id,
+                        BudgetReservation.status == BudgetReservationStatus.ACTIVE,
+                    )
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for reservation in active:
+            timeout_seconds = float(reservation.metadata_json.get("timeout_seconds", 0))
+            # The dead attempt cannot have run longer than the time since it was reserved, nor
+            # longer than its timeout: charge the smaller (still an upper bound, never an
+            # under-count). Tokens and cost keep the full reserved estimate.
+            elapsed = (
+                max(0.0, (now - reservation.created_at).total_seconds())
+                if reservation.created_at
+                else timeout_seconds
+            )
+            charged_runtime_s = min(timeout_seconds, elapsed) if timeout_seconds > 0 else elapsed
+            _release_reserved(budget, reservation)
+            reservation.status = BudgetReservationStatus.EXPIRED
+            reservation.resolved_at = now
+            reservation.metadata_json = {
+                **reservation.metadata_json,
+                "recovered_by_epoch": recovered_by_epoch,
+                "recovery_expired": True,
+            }
+            budget.consumed_input_tokens += reservation.reserved_input_tokens
+            budget.consumed_output_tokens += reservation.reserved_output_tokens
+            budget.consumed_total_tokens += (
+                reservation.reserved_input_tokens + reservation.reserved_output_tokens
+            )
+            budget.consumed_estimated_cost_usd += reservation.reserved_cost_usd
+            budget.consumed_runtime_ms += int(charged_runtime_s * 1000)
+            budget.total_agent_attempts += 1
+            budget.is_cost_estimated = True
+        if active:
+            _apply_thresholds(budget)
+            await db.flush()
+            logger.info(
+                "Recovery expired %d orphaned reservation(s) for execution %s",
+                len(active),
+                execution_id,
+            )
+        return len(active)
+
+    @staticmethod
     async def reserve(
         db: AsyncSession,
         execution_id: uuid.UUID,

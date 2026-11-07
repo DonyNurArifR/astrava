@@ -11,6 +11,14 @@ from app.models.workflow import Workflow, WorkflowStatus
 from app.schemas.execution import ExecutionCreate
 from app.schemas.workflow import WorkflowCreate
 
+TERMINAL_EXECUTION_STATUSES = frozenset(
+    {ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED}
+)
+
+
+class InvalidExecutionTransitionError(Exception):
+    """A finished execution cannot be moved to a different status."""
+
 
 class WorkflowService:
     @staticmethod
@@ -121,6 +129,13 @@ class WorkflowService:
         execution = await WorkflowService.get_execution(db, execution_id)
         if not execution:
             return None
+
+        # A finished execution is never reopened or flipped (a FAILED run cannot silently become
+        # successful, a COMPLETED one cannot be paused). Same-status rewrites stay allowed.
+        if execution.status in TERMINAL_EXECUTION_STATUSES and status != execution.status:
+            raise InvalidExecutionTransitionError(
+                f"Execution {execution_id} is {execution.status.value}; cannot move to {status.value}"
+            )
 
         execution.status = status
         if current_step is not None:

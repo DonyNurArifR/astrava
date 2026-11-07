@@ -161,3 +161,6 @@ M1.5-6  adversarial acceptance + freeze                     needs 5
 - **D4 tightened:** no unsafe mode of any kind (the planning text that allowed a separately reviewed development diagnostic is withdrawn pending a new reviewed proposal).
 - **Security debt:** SD-01, SD-05, SD-08 are closed; the table in `V1_5_TECHNICAL_RISKS.md` section 6 is superseded by decision record section 4.
 
+
+## Amendment A2 (2026-11-07) — M1.5-1c
+*Appended; nothing above was rewritten.* **M1.5-1c is delivered** (lease + epoch fencing, orphan reservation settlement, retry-aware attempt numbering, explicit `recover_execution`; SD-03 and SD-04 closed). M1.5-4 still requires 1a, 1b, 1c, 3, 4a (4a blocked by D1). M1.5-2 is the next dependency-ready milestone and needs separate operator authorization. Evidence: `V1_5_M1_5_1C_ACCEPTANCE_REPORT.md`.

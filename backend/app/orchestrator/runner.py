@@ -5,10 +5,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.db.session import AsyncSessionLocal
 from app.models.approval import ApprovalStatus
 from app.models.artifact import ArtifactType
 from app.models.budget import BudgetReservation, BudgetReservationStatus, BudgetStatus
@@ -27,6 +28,15 @@ from app.services.agent_service import AgentService
 from app.services.approval_service import ApprovalService
 from app.services.artifact_service import ArtifactService
 from app.services.budget_governor import BudgetGovernor
+from app.services.execution_lease import (
+    LeaseHeldError,
+    StaleWorkerError,
+    assert_epoch,
+    claim,
+    new_owner_id,
+    release,
+    run_with_lease,
+)
 from app.services.project_service import ProjectService
 from app.services.task_service import TaskService
 from app.services.usage_service import UsageService
@@ -45,6 +55,16 @@ logger = logging.getLogger("astrava.orchestrator.runner")
 # Concurrency semaphore enforcing MAX_CONCURRENT_EXECUTIONS
 _execution_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_EXECUTIONS)
 
+
+# Nodes after which the full state (tasks, artifacts, usage, terminal status) is synced.
+_FULL_SYNC_NODES_START = frozenset(
+    {"retrieve_knowledge", "plan", "artifact", "ingest_knowledge", "complete"}
+)
+_FULL_SYNC_NODES_RESUME = frozenset({"artifact", "ingest_knowledge", "complete"})
+# Nodes after which only the state snapshot is persisted (status stays RUNNING). Their output
+# resets tasks to a re-runnable state, so re-entering the graph from it is safe. dispatch_task
+# and verify are deliberately NOT checkpointed: their result is rebuilt from settled reservations.
+_CHECKPOINT_NODES = frozenset({"remediation", "replan"})
 
 _MAX_OBSERVED_HASH_BYTES = 25 * 1024 * 1024
 
@@ -94,6 +114,21 @@ class OrchestrationRunner:
         studio_type: str = "saas",
         goal_id: uuid.UUID | None = None,
     ) -> WorkflowExecution:
+        # The semaphore is taken BEFORE the execution is created or claimed, so a queued run never
+        # holds an un-heartbeated lease while it waits.
+        async with _execution_semaphore:
+            return await OrchestrationRunner._start_pipeline_locked(
+                db, project_id, objective, studio_type, goal_id
+            )
+
+    @staticmethod
+    async def _start_pipeline_locked(
+        db: AsyncSession,
+        project_id: uuid.UUID,
+        objective: str,
+        studio_type: str,
+        goal_id: uuid.UUID | None,
+    ) -> WorkflowExecution:
         # 1. Create or retrieve active workflow
         wf_data = WorkflowCreate(
             project_id=project_id,
@@ -125,7 +160,6 @@ class OrchestrationRunner:
         if goal_id:
             execution.goal_id = goal_id
             await db.flush()
-        await WorkflowService.update_execution_status(db, execution.id, ExecutionStatus.RUNNING)
         await WorkflowService.record_event(
             db,
             execution.id,
@@ -136,6 +170,20 @@ class OrchestrationRunner:
                 "goal_id": str(goal_id) if goal_id else None,
             },
         )
+
+        # Take single-writer ownership (commits the execution as RUNNING with a live lease).
+        owner = new_owner_id("run")
+        # PENDING -> RUNNING and the lease are one atomic UPDATE, so the execution is never
+        # visible as RUNNING-without-owner to a recoverer.
+        epoch = await claim(
+            db,
+            execution.id,
+            owner,
+            settings.EXECUTION_LEASE_TTL_SECONDS,
+            statuses=(ExecutionStatus.PENDING,),
+            new_status=ExecutionStatus.RUNNING,
+        )
+        await WorkflowService.update_execution_status(db, execution.id, ExecutionStatus.RUNNING)
 
         # Setup Git Worktree Sandboxing & Repository Context if project is bound to a repo.
         # Fail closed: any setup failure ends the execution FAILED before a provider can run.
@@ -148,9 +196,11 @@ class OrchestrationRunner:
                 repo_context_summary,
             ) = await OrchestrationRunner._setup_isolation(db, execution, project)
         except ExecutionSetupError as exc:
-            return await OrchestrationRunner._fail_execution_setup(
-                db, execution.id, str(exc), project.repo_path if project else None
+            failed = await OrchestrationRunner._fail_execution_setup(
+                db, execution.id, str(exc), project.repo_path if project else None, epoch=epoch
             )
+            await OrchestrationRunner._release_lease(execution.id, owner, epoch)
+            return failed
         # Budget is initialized only after setup succeeds, so a failed setup leaves no ACTIVE
         # budget or reservation behind.
         await BudgetGovernor.initialize_budget(db, execution.id, project_id)
@@ -202,36 +252,108 @@ class OrchestrationRunner:
         if repo_context_summary:
             initial_state["retrieval_context"] = repo_context_summary
 
-        # 4. Run LangGraph graph with concurrency semaphore and per-stage persistence
-        graph = build_orchestrator_graph()
-        current_state = dict(initial_state)
-        async with _execution_semaphore:
+        # 4. Persist the complete initial state before any node runs, so a crash at any later point
+        # leaves a recoverable execution (graph re-entry needs execution_id/project_id/snapshots).
+        await OrchestrationRunner._checkpoint_state(db, execution.id, initial_state, epoch)
+
+        # 5. Run the LangGraph graph under the concurrency semaphore and the execution lease.
+        try:
             try:
-                async for event in graph.astream(initial_state):
-                    for node_name, node_output in event.items():
-                        if node_output and isinstance(node_output, dict):
-                            current_state.update(node_output)
-                        if node_name in (
-                            "retrieve_knowledge",
-                            "plan",
-                            "artifact",
-                            "ingest_knowledge",
-                            "complete",
-                        ):
-                            await OrchestrationRunner._sync_state_to_db(
-                                db, execution.id, project_id, current_state
-                            )
+                final_state = await OrchestrationRunner._drive_graph(
+                    db,
+                    execution.id,
+                    project_id,
+                    initial_state,
+                    owner=owner,
+                    epoch=epoch,
+                    sync_nodes=_FULL_SYNC_NODES_START,
+                )
             except ExecutionSetupError as exc:
                 return await OrchestrationRunner._fail_execution_setup(
-                    db, execution.id, str(exc), repo_path_str
+                    db, execution.id, str(exc), repo_path_str, epoch=epoch
                 )
-            final_state = current_state
 
-        # 5. Final synchronization back to Database
-        await OrchestrationRunner._sync_state_to_db(db, execution.id, project_id, final_state)
-        # Reload execution with events loaded
+            # 6. Final synchronization back to Database
+            await OrchestrationRunner._sync_state_to_db(
+                db, execution.id, project_id, final_state, epoch=epoch
+            )
+        except StaleWorkerError:
+            await OrchestrationRunner._safe_rollback(db)
+            raise
+        finally:
+            await OrchestrationRunner._release_lease(execution.id, owner, epoch)
         reloaded = await WorkflowService.get_execution(db, execution.id)
         return reloaded or execution
+
+    @staticmethod
+    async def _drive_graph(
+        db: AsyncSession,
+        execution_id: uuid.UUID,
+        project_id: uuid.UUID,
+        state: dict[str, Any],
+        *,
+        owner: str,
+        epoch: int,
+        sync_nodes: frozenset[str],
+    ) -> dict[str, Any]:
+        """Stream the graph from ``state`` while the lease heartbeats; persist after each stage.
+
+        Every write is fenced on ``epoch``. If the lease is lost the graph run is cancelled and
+        StaleWorkerError is raised, so a superseded worker stops instead of racing its successor.
+        """
+        graph = build_orchestrator_graph()
+        current_state: dict[str, Any] = dict(state)
+
+        async def _work() -> dict[str, Any]:
+            async for event in graph.astream(state):
+                for node_name, node_output in event.items():
+                    if node_output and isinstance(node_output, dict):
+                        current_state.update(node_output)
+                    if node_name in sync_nodes:
+                        await OrchestrationRunner._sync_state_to_db(
+                            db, execution_id, project_id, current_state, epoch=epoch
+                        )
+                    elif node_name in _CHECKPOINT_NODES:
+                        await OrchestrationRunner._checkpoint_state(
+                            db, execution_id, current_state, epoch
+                        )
+            return current_state
+
+        return await run_with_lease(
+            AsyncSessionLocal,
+            execution_id,
+            owner,
+            epoch,
+            settings.EXECUTION_LEASE_TTL_SECONDS,
+            _work,
+        )
+
+    @staticmethod
+    async def _checkpoint_state(
+        db: AsyncSession, execution_id: uuid.UUID, state: dict[str, Any], epoch: int
+    ) -> None:
+        """Persist the state snapshot only (execution stays RUNNING). Fenced on ``epoch``."""
+        await assert_epoch(db, execution_id, epoch)
+        await WorkflowService.update_execution_status(
+            db, execution_id, ExecutionStatus.RUNNING, state_data=state
+        )
+        await db.commit()
+
+    @staticmethod
+    async def _safe_rollback(db: AsyncSession) -> None:
+        """Roll back after a cancelled graph run; the session may have been cancelled mid-query."""
+        try:
+            await db.rollback()
+        except Exception:
+            logger.warning("Rollback after lost lease failed; session discarded", exc_info=True)
+
+    @staticmethod
+    async def _release_lease(execution_id: uuid.UUID, owner: str, epoch: int) -> None:
+        try:
+            async with AsyncSessionLocal() as session:
+                await release(session, execution_id, owner, epoch)
+        except Exception:
+            logger.warning("Could not release lease for execution %s", execution_id, exc_info=True)
 
     @staticmethod
     async def resume_pipeline(
@@ -239,90 +361,224 @@ class OrchestrationRunner:
         execution_id: uuid.UUID,
         decision_req: ApprovalDecisionRequest,
     ) -> WorkflowExecution:
+        """Resume an execution that is WAITING_APPROVAL. Any other status is an idempotent no-op.
+
+        The status change to RUNNING and the epoch increment are one atomic UPDATE, so of two
+        simultaneous resumes exactly one proceeds, and a finished or running execution is never
+        re-entered (a FAILED run cannot become successful through a repeated resume).
+        """
         async with _execution_semaphore:
             execution = await WorkflowService.get_execution(db, execution_id)
             if not execution:
                 raise ValueError(f"Execution {execution_id} not found")
-
-            # Guard against duplicate resumption if already completed or cancelled
-            if execution.status in [ExecutionStatus.COMPLETED, ExecutionStatus.CANCELLED]:
+            if execution.status != ExecutionStatus.WAITING_APPROVAL:
                 return execution
 
-            state: OrchestrationState = dict(execution.state_data)  # type: ignore
-
-            # Mark approval records as decided in DB
-            pending_approvals = await ApprovalService.list_pending(db)
-            for appr in pending_approvals:
-                if appr.execution_id == execution_id:
-                    await ApprovalService.decide(
-                        db,
-                        appr.id,
-                        status=decision_req.decision,
-                        reason=decision_req.reason,
-                        decided_by=decision_req.decided_by,
-                    )
-
-            if decision_req.decision == ApprovalStatus.REJECTED:
-                # Rejection stops execution
-                await WorkflowService.update_execution_status(
+            owner = new_owner_id("resume")
+            try:
+                epoch = await claim(
                     db,
                     execution_id,
-                    ExecutionStatus.CANCELLED,
-                    error_message=f"Operator rejected: {decision_req.reason}",
+                    owner,
+                    settings.EXECUTION_LEASE_TTL_SECONDS,
+                    statuses=(ExecutionStatus.WAITING_APPROVAL,),
+                    new_status=ExecutionStatus.RUNNING,
+                    ignore_lease=True,
                 )
-                await WorkflowService.record_event(
-                    db, execution_id, "pipeline_rejected", {"reason": decision_req.reason}
+            except LeaseHeldError:
+                await db.refresh(execution)
+                return execution
+            await db.refresh(execution)
+
+            try:
+                return await OrchestrationRunner._resume_claimed(
+                    db, execution, decision_req, owner, epoch
                 )
-                reloaded = await WorkflowService.get_execution(db, execution_id)
-                return reloaded or execution
+            except StaleWorkerError:
+                await OrchestrationRunner._safe_rollback(db)
+                raise
+            finally:
+                await OrchestrationRunner._release_lease(execution_id, owner, epoch)
 
-            # Approved -> Mark active task as approved in state
-            tasks = state.get("tasks", [])
-            active_task_id = state.get("active_approval_id")
-            approved_title = "Approved Task"
-            for t in tasks:
-                if t.get("task_id") == active_task_id or (
-                    not active_task_id and t.get("requires_approval")
-                ):
-                    t["approved"] = True
-                    t["requires_approval"] = False
-                    approved_title = t.get("title", approved_title)
+    @staticmethod
+    async def _resume_claimed(
+        db: AsyncSession,
+        execution: WorkflowExecution,
+        decision_req: ApprovalDecisionRequest,
+        owner: str,
+        epoch: int,
+    ) -> WorkflowExecution:
+        execution_id = execution.id
+        state: OrchestrationState = dict(execution.state_data)  # type: ignore
 
-            state["tasks"] = tasks
-            state["status"] = "running"
-            state["active_approval_id"] = None
+        # Mark approval records as decided in DB
+        pending_approvals = await ApprovalService.list_pending(db)
+        for appr in pending_approvals:
+            if appr.execution_id == execution_id:
+                await ApprovalService.decide(
+                    db,
+                    appr.id,
+                    status=decision_req.decision,
+                    reason=decision_req.reason,
+                    decided_by=decision_req.decided_by,
+                )
 
+        if decision_req.decision == ApprovalStatus.REJECTED:
+            # Rejection stops execution
+            await assert_epoch(db, execution_id, epoch)
             await WorkflowService.update_execution_status(
-                db, execution_id, ExecutionStatus.RUNNING, state_data=state
+                db,
+                execution_id,
+                ExecutionStatus.CANCELLED,
+                error_message=f"Operator rejected: {decision_req.reason}",
             )
             await WorkflowService.record_event(
-                db, execution_id, "pipeline_resumed", {"approved_task": approved_title}
+                db, execution_id, "pipeline_rejected", {"reason": decision_req.reason}
             )
-
-            # Resume LangGraph execution from approved task
-            graph = build_orchestrator_graph()
-            current_state = dict(state)
-            try:
-                async for event in graph.astream(state):
-                    for node_name, node_output in event.items():
-                        if node_output and isinstance(node_output, dict):
-                            current_state.update(node_output)
-                        if node_name in ("artifact", "ingest_knowledge", "complete"):
-                            await OrchestrationRunner._sync_state_to_db(
-                                db, execution_id, execution.project_id, current_state
-                            )
-            except ExecutionSetupError as exc:
-                # e.g. the worktree directory was deleted before resume: no host-dir fallback.
-                return await OrchestrationRunner._fail_execution_setup(
-                    db, execution_id, str(exc), state.get("repo_path")
-                )
-            final_state = current_state
-
-            await OrchestrationRunner._sync_state_to_db(
-                db, execution_id, execution.project_id, final_state
-            )
+            await db.commit()
             reloaded = await WorkflowService.get_execution(db, execution_id)
             return reloaded or execution
+
+        # Approved -> Mark active task as approved in state
+        tasks = state.get("tasks", [])
+        active_task_id = state.get("active_approval_id")
+        approved_title = "Approved Task"
+        for t in tasks:
+            if t.get("task_id") == active_task_id or (
+                not active_task_id and t.get("requires_approval")
+            ):
+                t["approved"] = True
+                t["requires_approval"] = False
+                approved_title = t.get("title", approved_title)
+
+        state["tasks"] = tasks
+        state["status"] = "running"
+        state["active_approval_id"] = None
+
+        await assert_epoch(db, execution_id, epoch)
+        await WorkflowService.update_execution_status(
+            db, execution_id, ExecutionStatus.RUNNING, state_data=state
+        )
+        await WorkflowService.record_event(
+            db, execution_id, "pipeline_resumed", {"approved_task": approved_title}
+        )
+        await db.commit()
+
+        # The caller (resume_pipeline) already holds the execution semaphore.
+        try:
+            final_state = await OrchestrationRunner._drive_graph(
+                db,
+                execution_id,
+                execution.project_id,
+                state,
+                owner=owner,
+                epoch=epoch,
+                sync_nodes=_FULL_SYNC_NODES_RESUME,
+            )
+        except ExecutionSetupError as exc:
+            # e.g. the worktree directory was deleted before resume: no host-dir fallback.
+            return await OrchestrationRunner._fail_execution_setup(
+                db, execution_id, str(exc), state.get("repo_path"), epoch=epoch
+            )
+
+        await OrchestrationRunner._sync_state_to_db(
+            db, execution_id, execution.project_id, final_state, epoch=epoch
+        )
+        reloaded = await WorkflowService.get_execution(db, execution_id)
+        return reloaded or execution
+
+    @staticmethod
+    async def find_recoverable_executions(db: AsyncSession) -> list[uuid.UUID]:
+        """RUNNING executions whose lease is free or expired (their runner is gone)."""
+        rows = await db.execute(
+            text(
+                "SELECT id FROM workflow_executions WHERE status = 'RUNNING' "
+                "AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp()) "
+                "ORDER BY created_at"
+            )
+        )
+        return [r[0] for r in rows.all()]
+
+    @staticmethod
+    async def recover_execution(
+        db: AsyncSession, execution_id: uuid.UUID, owner: str | None = None
+    ) -> WorkflowExecution:
+        """Recover a RUNNING execution whose runner died, from persisted PostgreSQL state.
+
+        Claims the lease (raises ``LeaseHeldError`` if a live owner holds it), force-settles the
+        previous epoch's orphaned reservations, then re-enters the graph with the persisted
+        state. Not RUNNING (finished, waiting for approval, paused) means nothing to recover:
+        the execution is returned unchanged. Provider calls that never settled are repeated
+        (at-least-once); see docs/V1_5_M1_5_1C_SPEC.md section 2.3.
+        """
+        execution = await WorkflowService.get_execution(db, execution_id)
+        if not execution:
+            raise ValueError(f"Execution {execution_id} not found")
+        if execution.status != ExecutionStatus.RUNNING:
+            return execution
+
+        async with _execution_semaphore:
+            return await OrchestrationRunner._recover_locked(db, execution, owner)
+
+    @staticmethod
+    async def _recover_locked(
+        db: AsyncSession, execution: WorkflowExecution, owner: str | None
+    ) -> WorkflowExecution:
+        execution_id = execution.id
+        owner = owner or new_owner_id("recover")
+        epoch = await claim(
+            db,
+            execution_id,
+            owner,
+            settings.EXECUTION_LEASE_TTL_SECONDS,
+            statuses=(ExecutionStatus.RUNNING,),
+        )
+        try:
+            await db.refresh(execution)
+            state: dict[str, Any] = dict(execution.state_data or {})
+            expired = await BudgetGovernor.expire_orphaned_reservations(db, execution_id, epoch)
+            await WorkflowService.record_event(
+                db,
+                execution_id,
+                "pipeline_recovered",
+                {"epoch": epoch, "owner": owner, "expired_reservations": expired},
+            )
+            await db.commit()
+
+            if not state.get("execution_id") or not state.get("project_id"):
+                # Crash before the initial state was persisted: nothing ran; fail closed.
+                return await OrchestrationRunner._fail_execution_setup(
+                    db,
+                    execution_id,
+                    "Recovery impossible: execution state was never persisted",
+                    None,
+                    epoch=epoch,
+                )
+
+            try:
+                final_state = await OrchestrationRunner._drive_graph(
+                    db,
+                    execution_id,
+                    execution.project_id,
+                    state,
+                    owner=owner,
+                    epoch=epoch,
+                    sync_nodes=_FULL_SYNC_NODES_START,
+                )
+            except ExecutionSetupError as exc:
+                return await OrchestrationRunner._fail_execution_setup(
+                    db, execution_id, str(exc), state.get("repo_path"), epoch=epoch
+                )
+            await OrchestrationRunner._sync_state_to_db(
+                db, execution_id, execution.project_id, final_state, epoch=epoch
+            )
+        except StaleWorkerError:
+            await OrchestrationRunner._safe_rollback(db)
+            raise
+        finally:
+            await OrchestrationRunner._release_lease(execution_id, owner, epoch)
+        reloaded = await WorkflowService.get_execution(db, execution_id)
+        return reloaded or execution
 
     @staticmethod
     async def _setup_isolation(
@@ -406,8 +662,11 @@ class OrchestrationRunner:
         execution_id: uuid.UUID,
         reason: str,
         repo_path: str | None,
+        epoch: int | None = None,
     ) -> WorkflowExecution:
         """End the execution FAILED with an event; no task or provider has run."""
+        if epoch is not None:
+            await assert_epoch(db, execution_id, epoch)
         safe_reason = _redact_host_paths(reason, repo_path)
         await OrchestrationRunner._close_budget_after_setup_failure(db, execution_id)
         await WorkflowService.update_execution_status(
@@ -428,7 +687,11 @@ class OrchestrationRunner:
         execution_id: uuid.UUID,
         project_id: uuid.UUID,
         state: dict[str, Any],
+        epoch: int | None = None,
     ) -> None:
+        # Fence first: a superseded worker must not write tasks, artifacts, usage or status.
+        if epoch is not None:
+            await assert_epoch(db, execution_id, epoch)
         state_status = state.get("status", "running")
 
         # 1. Sync tasks to DB with ID mapping to prevent duplicate task creations
@@ -437,13 +700,18 @@ class OrchestrationRunner:
         completed_ids = set(state.get("completed_task_ids", []))
         failed_ids = set(state.get("failed_task_ids", []))
 
-        # Re-sync with any existing tasks in DB for this project to guarantee deduplication
+        # Re-sync with this execution's own task rows (matched on execution id + task key, never
+        # on title: another execution of the project may use identical titles).
         existing_tasks = await TaskService.list_by_project(db, project_id)
-        existing_by_title = {et.title: str(et.id) for et in existing_tasks}
+        existing_by_key = {
+            (et.input_data or {}).get("task_key"): str(et.id)
+            for et in existing_tasks
+            if (et.input_data or {}).get("execution_id") == str(execution_id)
+        }
         for t in tasks:
             task_key = t.get("task_id", "")
-            if task_key and task_key not in task_db_ids and t.get("title") in existing_by_title:
-                task_db_ids[task_key] = existing_by_title[t.get("title")]
+            if task_key and task_key not in task_db_ids and task_key in existing_by_key:
+                task_db_ids[task_key] = existing_by_key[task_key]
 
         for t in tasks:
             task_key = t.get("task_id", "")
@@ -489,6 +757,7 @@ class OrchestrationRunner:
                         risk_level=t.get("risk_level", "low"),
                         priority=t.get("priority", 1),
                         dependency_ids=t.get("dependencies", []),
+                        input_data={"execution_id": str(execution_id), "task_key": task_key},
                     ),
                 )
                 task_db_ids[task_key] = str(t_obj.id)

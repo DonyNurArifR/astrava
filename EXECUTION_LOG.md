@@ -104,3 +104,10 @@ Historical product-delivery log (M0 to V1.4 and the M1.5-1a summary): `docs/EXEC
 - **Evidence:** 796 backend tests, ruff clean, Alembic head unchanged, frontend 50 tests/0 lint errors/clean build, no frontend/migration/dependency change. Report `docs/V1_5_M1_5_1B_ACCEPTANCE_REPORT.md`.
 - **Next:** commit and push M1.5-1b only; STOP; request authorization for M1.5-1c.
 
+
+### [CP-006] OPERATOR+CLAUDE — AUTHORIZE+PLAN: M1.5-1c
+- Operator authorized M1.5-1c only (SD-03, SD-04). Claude inspected runner, graph, governor, services. Findings F1-F13 in `docs/V1_5_M1_5_1C_SPEC.md`: no checkpointer; no recovery entry point for RUNNING executions; resume_pipeline unguarded; reserve() returns the old fence token; retry loop restarts at attempt 0 after restart; state writes unfenced; task rows matched by title across executions. **Next:** Agy design review, then implementation (lease+epoch migration, orphan reservation expiry, attempt numbering, recover_execution) and real-process SIGKILL tests on an isolated database.
+
+### [CP-007] CLAUDE+AGY — IMPLEMENT/VALIDATE: M1.5-1c
+- Implemented lease+epoch (migration b7c1d2e3f4a5), orphan reservation settlement, attempt-number fix, recover_execution + CLI, terminal-state guard, task identity, checkpoints. 38 new tests (real-process SIGKILL scenarios A-H on throw-away databases). Backend 834 passed, ruff clean. Mutation: 13 guards, 12 killed, 1 redundant layer; 3 initial survivors closed by new tests.
+- Agy implementation review: ACCEPT WITH FIXES (no Critical/High); M-01..M-03, L-01 fixed. **Next:** commit and push M1.5-1c; STOP; await authorization for M1.5-2.

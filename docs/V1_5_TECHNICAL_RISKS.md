@@ -179,3 +179,6 @@ These are unresolved or insufficiently evidenced V1.4 acceptance findings. They 
 - **R-17: DNS rebinding against the loopback dev server.** With no key, a hostile web page could reach `localhost:8000`. Mitigation: request-time `Host`/client-address guard in M1.5-1a.
 - **R-18: Control-plane process holds Docker daemon access.** Compromise of the API process becomes compromise of every container and the Docker VM. Mitigation: authentication first, no docker socket in workers, narrow `WorkerRuntime` surface, launch-spec validator.
 - **R-19: Subscription token as a worker credential.** A prompt-injected agent can read the token in its environment; the token is long-lived and revocation behaviour is unverified; automated use may be restricted by Anthropic's terms (unverified). Mitigation and fallback options: Target Architecture section 11, D1.
+
+---
+**Status update (M1.5-1c):** SD-03 and SD-04 are **closed**; see `V1_5_M1_5_1C_ACCEPTANCE_REPORT.md`. SD-01, SD-05, SD-08 (M1.5-1a) and SD-02, SD-06 (M1.5-1b) are closed. SD-07 remains open until M1.5-4. New residuals: at-least-once provider invocation after a crash; unfenced file side effects of a stale agent until containerised workers.

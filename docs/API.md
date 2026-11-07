@@ -102,7 +102,7 @@ Initiates stateful LangGraph autonomous pipeline execution.
 - **Response `202 Accepted`:** Returns execution record with current status (`running` or `waiting_approval`).
 
 ### `POST /api/v1/orchestrator/resume/{execution_id}`
-Resumes an execution paused at a human approval checkpoint. The approver is the authenticated operator; an optional `decided_by` is rejected with `403` if it differs.
+Resumes an execution paused at a human approval checkpoint. Only an execution in `waiting_approval` is acted on (atomic claim); any other status, including a repeated or simultaneous resume, returns the execution unchanged. The approver is the authenticated operator; an optional `decided_by` is rejected with `403` if it differs.
 - **Request Body:**
   ```json
   {
@@ -150,3 +150,6 @@ Telemetry summary: total executions, total duration, token consumption, and cost
 
 ### `GET /api/v1/intelligence/usage`
 Granular log of model execution events (provider, model, duration ms, input/output tokens, cache reads, exit code).
+
+### Execution pause/resume (`POST /api/v1/executions/{id}/pause|resume`)
+Finished executions (`completed`, `failed`, `cancelled`) return `409`; `resume` additionally returns `409` unless the execution is `paused` (approvals use the orchestrator resume endpoint).

@@ -14,7 +14,7 @@ from app.schemas.execution import ExecutionCreate, ExecutionRead
 from app.schemas.remediation import RemediationSummaryResponse
 from app.services.budget_governor import BudgetGovernor, BudgetGovernorError
 from app.services.project_service import ProjectService
-from app.services.workflow_service import WorkflowService
+from app.services.workflow_service import InvalidExecutionTransitionError, WorkflowService
 from app.workspace import GitWorktreeManager
 from app.workspace.path_security import PathContainmentError, resolve_worktree_path
 
@@ -65,9 +65,12 @@ async def pause_execution(
     db: AsyncSession = Depends(get_db),
     operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> ExecutionRead:
-    execution = await WorkflowService.update_execution_status(
-        db, execution_id, ExecutionStatus.PAUSED
-    )
+    try:
+        execution = await WorkflowService.update_execution_status(
+            db, execution_id, ExecutionStatus.PAUSED
+        )
+    except InvalidExecutionTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
     await WorkflowService.record_event(
@@ -86,9 +89,19 @@ async def resume_execution(
     db: AsyncSession = Depends(get_db),
     operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> ExecutionRead:
-    execution = await WorkflowService.update_execution_status(
-        db, execution_id, ExecutionStatus.RUNNING
-    )
+    current = await WorkflowService.get_execution(db, execution_id)
+    if current is not None and current.status != ExecutionStatus.PAUSED:
+        # Only a manual pause is undone here. WAITING_APPROVAL needs an approval decision
+        # (orchestrator resume) and finished executions are never reopened.
+        raise HTTPException(
+            status_code=409, detail=f"Execution is {current.status.value}, not paused"
+        )
+    try:
+        execution = await WorkflowService.update_execution_status(
+            db, execution_id, ExecutionStatus.RUNNING
+        )
+    except InvalidExecutionTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
     await WorkflowService.record_event(
