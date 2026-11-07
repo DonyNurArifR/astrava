@@ -811,6 +811,39 @@
 - **Documentation & Tracking:**
   - Added ADR-019 in `docs/DECISIONS.md`.
   - Added Section 10 in `docs/ARCHITECTURE.md`.
+  - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.## 2026-11-07 — V1.4-M5: Repository Context & Git Worktree Sandboxing
+- **Role Alignment:** Lead AI Architect & Development Orchestrator: Gemini. Implementation Engine: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Ground autonomous development in real local Git repositories using isolated Git worktrees, structural codebase scanning, zero working tree contamination, and git diff/merge capabilities (M1.4-5).
+- **Core Architecture & Implementation:**
+  - **Database Schema Migration (`6db676dd20fd`):**
+    - Created and applied Alembic migration `6db676dd20fd_add_repo_path_and_worktree_support.py`.
+    - Added `projects.repo_path` and `projects.base_branch`.
+    - Added `workflow_executions.worktree_path` and `workflow_executions.worktree_branch`.
+  - **Structural Repository Scanner (`RepoScanner` in `backend/app/workspace/repo_scanner.py`):**
+    - Hierarchical scanner excluding heavy/cache directories (`.git`, `node_modules`, `.venv`, `dist`, `storage`).
+    - Toolchain detection for Python, Node/TS, Rust, Go, and Docker.
+    - Entrypoints and test suites discovery with compact context summary ($\le 1,500$ tokens / ~6,000 characters) injected into planning prompts.
+  - **Ephemeral Git Worktree Manager (`GitWorktreeManager` in `backend/app/workspace/worktree_manager.py`):**
+    - Manages ephemeral worktrees under `storage/worktrees/<exec_id>` on branch `astrava/exec-<exec_id>`.
+    - Guarantees zero working tree contamination in the user's primary repo checkout.
+    - Unified diff generation with numstats (`GitDiffResult`).
+    - Atomic deliverable commit (`commit_changes`), clean merge into base branch (`merge_worktree`), and pruning (`cleanup_worktree`).
+  - **Orchestration & Workflow Graph Sandboxing (`runner.py`, `workflow_graph.py`):**
+    - `start_pipeline` scans repository, generates context summary, and creates ephemeral worktree if project has `repo_path`.
+    - `_run_single_task` and `verify_node` route command execution and automated verification into the worktree path.
+    - `artifact_node` auto-commits completed task deliverables on the execution branch.
+  - **REST API & Frontend Client:**
+    - `GET /api/v1/projects/{project_id}/scan`: Returns detected toolchains and file structure summary.
+    - `GET /api/v1/executions/{execution_id}/diff`: Returns unified git diff and numstats.
+    - `POST /api/v1/executions/{execution_id}/merge`: Operator-authenticated merge of execution branch into base branch.
+    - Updated frontend TypeScript types and API client (`client.ts`).
+- **Verification & Acceptance:**
+  - Created `backend/tests/test_v1_4_git_worktrees.py` with 7 comprehensive tests (7/7 passed).
+  - Full backend pytest suite: **182/182 tests passed** in 29.56s.
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 107 backend files.
+  - Frontend Vitest suite: 9/9 test files (16 tests) passed in 1.45s; Vite build clean in 171ms.
+  - Alembic migration head: `6db676dd20fd` (clean, verified).
+- **Documentation & Tracking:**
+  - Added ADR-020 in `docs/DECISIONS.md`.
+  - Added Section 11 in `docs/ARCHITECTURE.md`.
   - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.
-
-

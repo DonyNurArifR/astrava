@@ -55,6 +55,8 @@ class Project(Base, UUIDMixin, TimestampMixin):
     )
     target_objectives: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     settings_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    repo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    base_branch: Mapped[str | None] = mapped_column(String(100), default="main", nullable=True)
 
     # Relationships
     workspace: Mapped["Workspace"] = relationship("Workspace", back_populates="projects")

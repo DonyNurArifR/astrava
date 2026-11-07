@@ -154,5 +154,16 @@
   5. *Persistence & REST API:* Add `project_goals` table with progress tracking, link executions via `workflow_executions.goal_id`, and track iterations via `replan_count`. Expose goal CRUD endpoints (`/api/v1/projects/{project_id}/goals`), goal execution trigger (`/execute`), and an authenticated manual replanning endpoint (`/api/v1/executions/{execution_id}/replan`).
 - **Consequences:** Eliminates static template limitations; supports arbitrary non-standard workflows; protects completed work from rollback or overwriting; prevents infinite replanning loops with strict budget bounding; provides comprehensive relational and API visibility for goal-driven pipelines.
 
+## ADR-020: Repository Context & Git Worktree Sandboxing (M1.4-5)
+- **Status:** Accepted
+- **Context:** Prior versions executed agent tasks in arbitrary artifact storage directories disconnected from actual software repositories. Grounding agent development in real codebases requires scanning repository architectures and isolating file modifications to avoid contaminating the user's primary working tree.
+- **Decision:**
+  1. *Structural Repository Scanning (`RepoScanner`):* Implement a filesystem scanner that traverses repositories up to configurable depth while ignoring cache/vendor directories (`.git`, `node_modules`, `.venv`, `dist`, `storage`). Extract detected toolchains (Python, Node/TS, Rust, Go, Docker), entrypoints, and test directories into a compact markdown summary ($\le 1,500$ tokens) injected into planning prompts.
+  2. *Ephemeral Git Worktree Isolation (`GitWorktreeManager`):* Create an isolated Git worktree under `storage/worktrees/<execution_id>` on branch `astrava/exec-<execution_id>` for each repository execution. Direct agent execution, deliverable writing, and deterministic verification tests into the worktree path.
+  3. *Zero Working Tree Contamination:* Prevent changes from touching the main checkout. Provide auto-commit for completed tasks and generate standard git diffs and numstats against the project base branch.
+  4. *Merge & Prune Lifecycle:* Expose an operator-authorized merge endpoint (`POST /executions/{id}/merge`) to integrate execution branches into base branches upon verification. Prune ephemeral worktrees cleanly via `git worktree remove --force` and `git worktree prune`.
+  5. *Relational Persistence:* Add `repo_path` and `base_branch` to `projects` table; add `worktree_path` and `worktree_branch` to `workflow_executions` table via migration `6db676dd20fd`.
+- **Consequences:** Eliminates scratch-directory disconnections; enables real-world codebase editing with full git provenance; guarantees complete isolation from developer workspaces; provides clean diff inspection and automated merge capabilities.
+
 
 

@@ -15,6 +15,10 @@ class ProjectBase(BaseModel):
     studio_type: StudioType = StudioType.SAAS
     target_objectives: list[str] = []
     settings_json: dict[str, Any] = {}
+    repo_path: str | None = Field(None, max_length=500, description="Local Git repository path")
+    base_branch: str | None = Field(
+        "main", max_length=100, description="Base branch for execution worktrees"
+    )
 
     @field_validator("name")
     @classmethod
@@ -35,6 +39,8 @@ class ProjectUpdate(BaseModel):
     status: ProjectStatus | None = None
     target_objectives: list[str] | None = None
     settings_json: dict[str, Any] | None = None
+    repo_path: str | None = Field(None, max_length=500)
+    base_branch: str | None = Field(None, max_length=100)
 
     @field_validator("name")
     @classmethod

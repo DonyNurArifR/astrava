@@ -143,6 +143,10 @@ class WorkflowService:
             if "goal_id" in state_data and state_data["goal_id"]:
                 gid = state_data["goal_id"]
                 execution.goal_id = uuid.UUID(gid) if isinstance(gid, str) else gid
+            if "worktree_path" in state_data and state_data["worktree_path"]:
+                execution.worktree_path = state_data["worktree_path"]
+            if "worktree_branch" in state_data and state_data["worktree_branch"]:
+                execution.worktree_branch = state_data["worktree_branch"]
         if checkpoint_id:
             execution.checkpoint_id = checkpoint_id
 

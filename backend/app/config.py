@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     # Storage paths
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
     ARTIFACT_STORAGE_PATH: Path = BASE_DIR / "storage" / "artifacts"
+    WORKTREE_STORAGE_PATH: Path = BASE_DIR / "storage" / "worktrees"
 
     # Provider & Model Settings
     CLAUDE_CLI_PATH: str = "claude"

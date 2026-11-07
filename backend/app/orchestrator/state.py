@@ -45,3 +45,7 @@ class OrchestrationState(TypedDict, total=False):
     remediation_needed: bool
     remediation_task_ids: list[str]
     remediation_records: list[dict[str, Any]]
+    # Git Worktree Sandboxing & Repository Context (V1.4 M1.4-5)
+    repo_path: str | None
+    worktree_path: str | None
+    worktree_branch: str | None

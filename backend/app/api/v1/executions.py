@@ -13,7 +13,9 @@ from app.schemas.budget import BudgetLimitsUpdate, BudgetSummaryResponse
 from app.schemas.execution import ExecutionCreate, ExecutionRead
 from app.schemas.remediation import RemediationSummaryResponse
 from app.services.budget_governor import BudgetGovernor, BudgetGovernorError
+from app.services.project_service import ProjectService
 from app.services.workflow_service import WorkflowService
+from app.workspace import GitWorktreeManager
 
 router = APIRouter(prefix="/executions", tags=["Executions"])
 
@@ -243,3 +245,81 @@ async def replan_execution(
     await db.commit()
     await db.refresh(execution)
     return ExecutionRead.model_validate(execution)
+
+
+@router.get("/{execution_id}/diff")
+async def get_execution_diff(
+    execution_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    execution = await WorkflowService.get_execution(db, execution_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    if not execution.worktree_path:
+        return {
+            "files_changed": [],
+            "insertions": 0,
+            "deletions": 0,
+            "diff_text": "",
+            "has_changes": False,
+        }
+
+    project = await ProjectService.get_by_id(db, execution.project_id)
+    base_branch = project.base_branch if project else "main"
+
+    diff_result = await GitWorktreeManager.get_diff(
+        worktree_path=execution.worktree_path,
+        base_branch=base_branch,
+    )
+    return diff_result.to_dict()
+
+
+@router.post("/{execution_id}/merge")
+async def merge_execution_worktree(
+    execution_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
+) -> dict[str, Any]:
+    execution = await WorkflowService.get_execution(db, execution_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    if not execution.worktree_branch:
+        raise HTTPException(
+            status_code=400, detail="Execution does not have an active worktree branch"
+        )
+
+    project = await ProjectService.get_by_id(db, execution.project_id)
+    if not project or not project.repo_path:
+        raise HTTPException(status_code=400, detail="Project does not have a repo_path configured")
+
+    target_branch = project.base_branch or "main"
+    success, merge_log = await GitWorktreeManager.merge_worktree(
+        repo_path=project.repo_path,
+        branch_name=execution.worktree_branch,
+        target_branch=target_branch,
+    )
+
+    if not success:
+        raise HTTPException(status_code=422, detail=f"Merge conflict or failure: {merge_log}")
+
+    await WorkflowService.record_event(
+        db,
+        execution_id,
+        "worktree_branch_merged",
+        {
+            "branch": execution.worktree_branch,
+            "target_branch": target_branch,
+            "actor_id": operator.actor_id,
+        },
+    )
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": f"Successfully merged branch '{execution.worktree_branch}' into '{target_branch}'",
+        "branch": execution.worktree_branch,
+        "target_branch": target_branch,
+        "output": merge_log,
+    }

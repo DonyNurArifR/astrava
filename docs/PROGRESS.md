@@ -121,4 +121,12 @@
 | V1.4-M4-T5 | V1.4 | Closed-Loop `replan_node` & Budget Ceiling Guardrail | COMPLETE | `backend/app/orchestrator/workflow_graph.py` | LangGraph `replan_node`, 2-replan ceiling enforced via `BudgetGovernor.record_replan()`, workflow telemetry event logging |
 | V1.4-M4-T6 | V1.4 | Goal & Replanning REST APIs & Frontend Client | COMPLETE | `goals.py`, `executions.py`, `client.ts`, `types/api.ts` | Goal CRUD, goal execution trigger, operator-authorized replanning endpoint, full frontend TypeScript bindings |
 | V1.4-M4-T7 | V1.4 | Adaptive Planning & Regression Test Suite | COMPLETE | `test_v1_4_adaptive_planning.py`, `tests/` | 7/7 adaptive planning tests passing; full backend suite 175/175 passing; 16/16 frontend vitest passing; clean Vite build |
+| V1.4-M5-T1 | V1.4 | Database Schema Migration (`6db676dd20fd`) | COMPLETE | `backend/alembic/versions/6db676dd20fd_...` | Added `projects.repo_path`, `projects.base_branch`, `workflow_executions.worktree_path`, `workflow_executions.worktree_branch` |
+| V1.4-M5-T2 | V1.4 | Structural Repository Scanner (`RepoScanner`) | COMPLETE | `backend/app/workspace/repo_scanner.py` | Multi-language toolchain detection, entrypoints & test directory discovery, context summary ($\le 1500$ tokens) |
+| V1.4-M5-T3 | V1.4 | Ephemeral Git Worktree Manager (`GitWorktreeManager`) | COMPLETE | `backend/app/workspace/worktree_manager.py` | Isolated worktree creation on `astrava/exec-<id>`, unified diff generation, deliverable auto-commit, merge and prune |
+| V1.4-M5-T4 | V1.4 | Orchestrator & Workflow Graph Sandboxing | COMPLETE | `runner.py`, `workflow_graph.py` | Sandboxed execution routing into worktrees, repo context injection, auto-commit of completed task deliverables |
+| V1.4-M5-T5 | V1.4 | Diff, Merge & Scan REST Endpoints | COMPLETE | `projects.py`, `executions.py` | `GET /projects/{id}/scan`, `GET /executions/{id}/diff`, `POST /executions/{id}/merge` with operator authorization |
+| V1.4-M5-T6 | V1.4 | Frontend Client & Type Bindings | COMPLETE | `client.ts`, `types/api.ts` | `GitDiffResult`, `RepoScanResult`, `getExecutionDiff`, `mergeExecutionWorktree`, `scanProjectRepo` |
+| V1.4-M5-T7 | V1.4 | Worktree Sandboxing & Regression Test Suite | COMPLETE | `test_v1_4_git_worktrees.py`, `tests/` | 7/7 worktree tests passing; full backend suite 182/182 passing in 29.56s; 16/16 frontend vitest passing; clean Vite build |
+
 

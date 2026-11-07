@@ -487,6 +487,29 @@ Integrated within the LangGraph state graph between verification and execution:
   - `POST /api/v1/projects/{project_id}/goals`: Create a project goal.
   - `GET /api/v1/projects/{project_id}/goals`: List project goals.
   - `POST /api/v1/projects/{project_id}/goals/{goal_id}/execute`: Trigger workflow execution targeting a goal.
-  - `POST /api/v1/executions/{execution_id}/replan`: Operator-authenticated manual replan endpoint with budget ceiling verification.
+  - `POST /api/v1/executions/{execution_id}/replan`: Operator-authenticated manual replan endpoint with budget ceiling verification.---
 
+## 11. V1.4 Repository Context & Git Worktree Sandboxing (M1.4-5)
 
+### 11.1 Structural Repository Scanner (`RepoScanner`)
+To ground autonomous agents in existing codebases rather than isolated scratch directories:
+- **Hierarchical Scanning & Exclusions:** Traverses project repositories while ignoring noisy or heavy paths (`.git`, `node_modules`, `.venv`, `__pycache__`, `dist`, `build`, `.next`, `storage`).
+- **Toolchain & Manifest Recognition:** Identifies manifests for Python (`pyproject.toml`, `requirements.txt`, `Pipfile`), Node/TS (`package.json`, `tsconfig.json`, lockfiles), Rust (`Cargo.toml`), Go (`go.mod`), and container configurations (`Dockerfile`, `docker-compose.yml`).
+- **Entrypoints & Test Suites:** Detects core application entry points (`main.py`, `app.py`, `src/App.tsx`, `src/index.ts`) and test suites (`tests/`, `__tests__/`).
+- **Bounded Context Summary:** Synthesizes a compact structural markdown summary ($\le 1,500$ tokens / ~6,000 characters) injected into `GoalDecomposer` and planner prompts.
+
+### 11.2 Isolated Ephemeral Worktrees (`GitWorktreeManager`)
+To ensure safety and eliminate workspace contamination:
+- **Per-Execution Branching:** Every pipeline targeting a repository creates an isolated worktree under `storage/worktrees/<execution_id>` checked out to dedicated branch `astrava/exec-<execution_id>`.
+- **Zero Workspace Contamination:** Tasks modify real files inside the ephemeral worktree. The developer's primary working directory and branch remain untouched.
+- **Unified Diff Generation & Auto-Commit:** Generates standard git diffs and numstats against base branches. Automatically commits deliverable task changes on branch milestones.
+- **Merge & Prune Lifecycle:** Supports operator-authenticated merging back into base branches (`merge_worktree`), and prunes worktrees (`cleanup_worktree`) upon task completion or execution cleanup.
+
+### 11.3 Relational Schema & REST Endpoints
+- **Database Schema Migration (`6db676dd20fd`):**
+  - Added `projects.repo_path` (`String(500)`) and `projects.base_branch` (`String(100)`).
+  - Added `workflow_executions.worktree_path` (`String(500)`) and `workflow_executions.worktree_branch` (`String(200)`).
+- **REST APIs:**
+  - `GET /api/v1/projects/{project_id}/scan`: Return repository toolchains, entry points, and structural overview.
+  - `GET /api/v1/executions/{execution_id}/diff`: Return unified diff, files changed, insertions, and deletions.
+  - `POST /api/v1/executions/{execution_id}/merge`: Operator-authenticated merge of execution worktree branch into base branch.

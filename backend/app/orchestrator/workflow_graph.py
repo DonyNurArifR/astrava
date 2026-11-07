@@ -41,6 +41,7 @@ from app.services.retrieval.service import RetrievalService
 from app.services.workflow_service import WorkflowService
 from app.verification.engine import VerificationEngine
 from app.verification.semantic_evaluator import SemanticEvaluator
+from app.workspace import GitWorktreeManager
 
 logger = logging.getLogger("astrava.orchestrator")
 
@@ -405,9 +406,16 @@ async def _run_single_task(
 
     usage_records: list[dict[str, Any]] = []
 
+    # If state provides an isolated git worktree, route execution and verification into it
+    effective_work_dir = project_work_dir
+    if state.get("worktree_path"):
+        wt_p = Path(state["worktree_path"]).resolve()
+        if wt_p.exists() and wt_p.is_dir():
+            effective_work_dir = wt_p
+
     # 2. Deterministic task execution (e.g. QA engineer)
     if task.get("executor_type") == ExecutorType.DETERMINISTIC:
-        report = await VerificationEngine.verify_task(project_work_dir)
+        report = await VerificationEngine.verify_task(effective_work_dir)
         output_text = json.dumps(report.model_dump(), indent=2)
         task["output_text"] = output_text
         task["status"] = "completed" if report.overall_passed else "failed"
@@ -479,7 +487,7 @@ Produce the complete deliverable meeting all criteria directly."""
     provider = ProviderFactory.get_provider("claude_code")
     p_req = ProviderRequest(
         prompt=prompt,
-        working_directory=project_work_dir,
+        working_directory=effective_work_dir,
         model=task.get("assigned_model", "haiku"),
         timeout_seconds=timeout_seconds,
     )
@@ -641,6 +649,10 @@ async def dispatch_task_node(state: OrchestrationState) -> dict[str, Any]:
     ready_ids = state.get("current_ready_task_ids", [])
     project_id = state.get("project_id", "default")
     project_work_dir = (settings.ARTIFACT_STORAGE_PATH / project_id).resolve()
+    if state.get("worktree_path"):
+        wt_p = Path(state["worktree_path"]).resolve()
+        if wt_p.exists() and wt_p.is_dir():
+            project_work_dir = wt_p
     project_work_dir.mkdir(parents=True, exist_ok=True)
 
     task_map = {t["task_id"]: t for t in tasks}
@@ -855,6 +867,10 @@ async def verify_node(state: OrchestrationState) -> dict[str, Any]:
     task_map = {t["task_id"]: t for t in tasks}
     project_id = state.get("project_id", "default")
     project_work_dir = (settings.ARTIFACT_STORAGE_PATH / project_id).resolve()
+    if state.get("worktree_path"):
+        wt_p = Path(state["worktree_path"]).resolve()
+        if wt_p.exists() and wt_p.is_dir():
+            project_work_dir = wt_p
 
     logger.info("Running deterministic & semantic verification for batch: %s", ready_ids)
     report = await VerificationEngine.verify_task(project_work_dir)
@@ -1143,6 +1159,10 @@ async def artifact_node(state: OrchestrationState) -> dict[str, Any]:
     ready_ids = state.get("current_ready_task_ids", [])
     project_id = state.get("project_id", "default")
     project_work_dir = (settings.ARTIFACT_STORAGE_PATH / project_id).resolve()
+    if state.get("worktree_path"):
+        wt_p = Path(state["worktree_path"]).resolve()
+        if wt_p.exists() and wt_p.is_dir():
+            project_work_dir = wt_p
 
     artifacts = list(state.get("artifacts", []))
     completed_ids = list(state.get("completed_task_ids", []))
@@ -1183,6 +1203,19 @@ async def artifact_node(state: OrchestrationState) -> dict[str, Any]:
 
         if tid not in completed_ids:
             completed_ids.append(tid)
+
+    # Auto-commit deliverable artifacts if operating in an isolated git worktree
+    if state.get("worktree_path"):
+        wt_p = Path(state["worktree_path"]).resolve()
+        if wt_p.exists() and wt_p.is_dir():
+            try:
+                commit_msg = f"chore(execution): completed tasks {ready_ids}"
+                await GitWorktreeManager.commit_changes(
+                    worktree_path=wt_p,
+                    message=commit_msg,
+                )
+            except Exception as e:
+                logger.warning("Auto-commit in worktree %s failed: %s", wt_p, e)
 
     return {
         "artifacts": artifacts,

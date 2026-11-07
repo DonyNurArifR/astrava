@@ -6,6 +6,7 @@ import type {
   BudgetLimitsUpdate,
   BudgetSummary,
   Execution,
+  GitDiffResult,
   GoalCreate,
   GoalUpdate,
   MemoryAuditLog,
@@ -19,6 +20,7 @@ import type {
   ProjectMemory,
   ProjectStats,
   RemediationSummary,
+  RepoScanResult,
   StructuredPlan,
   StudioType,
   Task,
@@ -353,4 +355,29 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     }).then(r => handleResponse<Execution>(r)),
+
+  // Git Worktree Sandboxing & Repo Scanning (M1.4-5)
+  getExecutionDiff: (executionId: string) =>
+    fetch(`${API_BASE}/executions/${executionId}/diff`).then(r =>
+      handleResponse<GitDiffResult>(r)
+    ),
+
+  mergeExecutionWorktree: (executionId: string) =>
+    fetch(`${API_BASE}/executions/${executionId}/merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }).then(r =>
+      handleResponse<{
+        success: boolean;
+        message: string;
+        branch: string;
+        target_branch: string;
+        output: string;
+      }>(r)
+    ),
+
+  scanProjectRepo: (projectId: string) =>
+    fetch(`${API_BASE}/projects/${projectId}/scan`).then(r =>
+      handleResponse<RepoScanResult>(r)
+    ),
 };

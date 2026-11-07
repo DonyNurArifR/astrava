@@ -38,6 +38,8 @@ class ProjectService:
             status=ProjectStatus.ACTIVE,
             target_objectives=data.target_objectives,
             settings_json=data.settings_json,
+            repo_path=data.repo_path,
+            base_branch=data.base_branch or "main",
         )
         db.add(project)
         await db.flush()

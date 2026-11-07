@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +8,7 @@ from app.db.session import get_db
 from app.models.project import ProjectStatus
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
 from app.services.project_service import ProjectService
+from app.workspace import RepoScanner
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -71,3 +73,22 @@ async def delete_project(
     if not success:
         raise HTTPException(status_code=404, detail="Project not found")
     return None
+
+
+@router.get("/{project_id}/scan")
+async def scan_project_repo(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    project = await ProjectService.get_by_id(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not project.repo_path:
+        raise HTTPException(status_code=400, detail="Project does not have a repo_path configured")
+    try:
+        scan_result = RepoScanner.scan(project.repo_path)
+        return scan_result.to_dict()
+    except (FileNotFoundError, NotADirectoryError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"Failed to scan repository: {err}") from err

@@ -15,6 +15,8 @@ export interface Project {
   status: ProjectStatus;
   target_objectives: string[];
   settings_json: Record<string, any>;
+  repo_path?: string | null;
+  base_branch?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -54,6 +56,8 @@ export interface Execution {
   remediation_count?: number;
   replan_count?: number;
   goal_id?: string | null;
+  worktree_path?: string | null;
+  worktree_branch?: string | null;
   state_data: Record<string, any>;
   checkpoint_id: string | null;
   started_at: string | null;
@@ -408,4 +412,22 @@ export interface GoalUpdate {
   status?: GoalStatus;
   target_criteria?: string[];
   progress_percentage?: number;
+}
+
+export interface GitDiffResult {
+  files_changed: string[];
+  insertions: number;
+  deletions: number;
+  diff_text: string;
+  has_changes: boolean;
+}
+
+export interface RepoScanResult {
+  repo_path: string;
+  toolchains: string[];
+  entry_points: string[];
+  test_directories: string[];
+  file_tree: string[];
+  total_files_scanned: number;
+  context_summary: string;
 }

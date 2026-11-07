@@ -58,6 +58,8 @@ class WorkflowExecution(Base, UUIDMixin, TimestampMixin):
         nullable=True,
         index=True,
     )
+    worktree_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    worktree_branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
     state_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     checkpoint_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

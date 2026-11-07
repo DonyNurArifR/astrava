@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,9 +24,11 @@ from app.services.agent_service import AgentService
 from app.services.approval_service import ApprovalService
 from app.services.artifact_service import ArtifactService
 from app.services.budget_governor import BudgetGovernor
+from app.services.project_service import ProjectService
 from app.services.task_service import TaskService
 from app.services.usage_service import UsageService
 from app.services.workflow_service import WorkflowService
+from app.workspace import GitWorktreeManager, RepoScanner
 
 logger = logging.getLogger("astrava.orchestrator.runner")
 
@@ -86,6 +89,37 @@ class OrchestrationRunner:
             },
         )
 
+        # Setup Git Worktree Sandboxing & Repository Context if project is bound to a repo
+        worktree_path: str | None = None
+        worktree_branch: str | None = None
+        repo_path_str: str | None = None
+        repo_context_summary: str | None = None
+
+        project = await ProjectService.get_by_id(db, project_id)
+        if project and project.repo_path:
+            repo_path_obj = Path(project.repo_path).resolve()
+            if repo_path_obj.exists() and repo_path_obj.is_dir():
+                repo_path_str = str(repo_path_obj)
+                try:
+                    scan_result = RepoScanner.scan(repo_path_obj)
+                    repo_context_summary = scan_result.context_summary
+                except Exception as scan_err:
+                    logger.warning("Repository scanning failed for %s: %s", repo_path_obj, scan_err)
+
+                try:
+                    wt_ctx = await GitWorktreeManager.create_worktree(
+                        repo_path=repo_path_obj,
+                        execution_id=execution.id,
+                        base_branch=project.base_branch or "main",
+                    )
+                    worktree_path = wt_ctx.worktree_path
+                    worktree_branch = wt_ctx.branch_name
+                    execution.worktree_path = worktree_path
+                    execution.worktree_branch = worktree_branch
+                    await db.flush()
+                except Exception as wt_err:
+                    logger.warning("Worktree creation failed for %s: %s", repo_path_obj, wt_err)
+
         # Capture immutable agent configuration snapshot for reproducible execution
         agents = await AgentService.list_agents(db)
         if not agents:
@@ -114,6 +148,9 @@ class OrchestrationRunner:
             "objective": objective,
             "studio_type": studio_type,
             "goal_id": str(goal_id) if goal_id else None,
+            "repo_path": repo_path_str,
+            "worktree_path": worktree_path,
+            "worktree_branch": worktree_branch,
             "agent_snapshots": agent_snapshots,
             "tasks": [],
             "completed_task_ids": [],
@@ -127,6 +164,8 @@ class OrchestrationRunner:
             "task_db_ids": {},
             "synced_usage_count": 0,
         }
+        if repo_context_summary:
+            initial_state["retrieval_context"] = repo_context_summary
 
         # 4. Run LangGraph graph with concurrency semaphore and per-stage persistence
         graph = build_orchestrator_graph()
