@@ -798,7 +798,8 @@ async def test_execution_mutation_endpoints_require_auth(monkeypatch, db_session
         assert "execution_paused" in event_types
         assert "execution_resumed" in event_types
         pause_event = next(e for e in events if e.event_type == "execution_paused")
-        assert pause_event.payload["actor_id"] == "LeadSecurityOfficer"
+        # Client-supplied X-ASTRAVA-ACTOR-NAME is ignored; server identity is recorded.
+        assert pause_event.payload["actor_id"] == "Abstract"
 
 
 # ==============================================================================

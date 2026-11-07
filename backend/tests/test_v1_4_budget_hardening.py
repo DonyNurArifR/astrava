@@ -158,7 +158,8 @@ async def test_budget_increase_http_security_and_audit(monkeypatch, db_session):
             .all()
         )
         assert len(logs) == 1
-        assert logs[0].actor_id == "LeadArchitect"
+        # Client-supplied X-ASTRAVA-ACTOR-NAME is ignored; server identity is recorded.
+        assert logs[0].actor_id == "Abstract"
         assert logs[0].reason == "Approved load test stage 2"
         assert logs[0].new_limits["max_cost_usd"] == 5.0
 
@@ -176,7 +177,7 @@ async def test_budget_increase_http_security_and_audit(monkeypatch, db_session):
             .all()
         )
         assert len(events) == 1
-        assert events[0].payload["actor_id"] == "LeadArchitect"
+        assert events[0].payload["actor_id"] == "Abstract"
 
 
 # ==============================================================================

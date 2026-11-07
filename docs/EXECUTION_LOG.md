@@ -932,5 +932,9 @@
   - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.
   - Baseline declared **COMPLETE AND FROZEN**.
 
-
+## V1.5 M1.5-1a - Operator Authentication and Audit Identity
+- Orchestrator inspected the full route inventory (74 routes; 16 of 33 mutating routes were unauthenticated), produced a spec, and had it design-reviewed by Antigravity before any code was written.
+- Haiku 5.5 (Claude Pro subscription) executed bounded tasks H1 (backend core), H2 (backend tests), H3 (frontend), H4 (review remediation). The orchestrator reviewed every diff, re-ran all checks itself, ran an independent adversarial probe, real-uvicorn smoke tests and mutation tests, and requested an independent Antigravity security review (ACCEPT WITH FIXES; all five findings remediated).
+- Final: 522 backend tests, 50 frontend tests, ruff clean, oxlint 0 errors (14 baseline warnings), clean TypeScript and production build. Details: `docs/V1_5_M1_5_1A_ACCEPTANCE_REPORT.md`, `docs/SECURITY.md`.
+- Not started: M1.5-1b, M1.5-1c, M1.5-2 and later. No Docker access for the API process. No credential injection or brokerage.
 

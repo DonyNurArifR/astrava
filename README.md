@@ -81,9 +81,13 @@ cd backend
 uv sync
 uv run alembic upgrade head
 uv run pytest
-uv run uvicorn app.main:app --reload --port 8000
+uv run python -m app.serve        # validates security config, binds APP_HOST:APP_PORT (127.0.0.1:8000)
+# or, for hot reload during development (keep the host on loopback):
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
-API Documentation is available at: `http://localhost:8000/docs`
+Interactive API docs (`http://localhost:8000/docs`) exist only when `DEBUG=true`.
+
+**Authentication (M1.5-1a).** Leave `OPERATOR_API_KEY` unset for local development: the API serves only loopback clients and the UI needs no login. To require sign-in (or to bind beyond loopback) set a 32+ character `OPERATOR_API_KEY`; the dashboard then shows a login screen and uses an HttpOnly session cookie. The key is never exposed to frontend JavaScript. Full model, deployment rules and residual risks: [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ### 3. Frontend Setup & Startup
 ```bash
@@ -102,6 +106,12 @@ Dashboard is accessible at: `http://localhost:3000` (or `http://localhost:5173`)
 |---|---|---|
 | `APP_NAME` | `ASTRAVA` | Application name |
 | `APP_ENV` | `development` | Runtime environment (`development`, `test`, `production`) |
+| `APP_HOST` | `127.0.0.1` | Bind host. Non-loopback requires `OPERATOR_API_KEY` and `DEBUG=false` |
+| `DEBUG` | `false` | Enables OpenAPI docs and verbose logging (refused on non-loopback hosts) |
+| `OPERATOR_API_KEY` | *(unset)* | Operator credential, 32+ chars. Unset = local-dev mode (loopback only). Never set to blank |
+| `ALLOWED_HOSTS` | `["localhost","127.0.0.1","[::1]","::1"]` | Accepted `Host` header names (port ignored) |
+| `SESSION_TTL_SECONDS` | `28800` | Browser session lifetime |
+| `COOKIE_SECURE` | auto | Force the `Secure` cookie flag (auto: HTTPS or non-loopback host) |
 | `DATABASE_URL` | `postgresql+asyncpg://astrava:astrava_dev_password@localhost:5433/astrava` | Async database connection URL |
 | `DATABASE_URL_SYNC` | `postgresql://astrava:astrava_dev_password@localhost:5433/astrava` | Sync connection URL for Alembic migrations |
 | `ARTIFACT_STORAGE_PATH` | `./storage/artifacts` | Path for sandboxed deliverables |

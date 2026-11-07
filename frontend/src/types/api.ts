@@ -445,3 +445,20 @@ export interface AgentMetrics {
   total_tokens: number;
   avg_duration_ms: number;
 }
+
+// Operator session (M1.5-1a). Mirrors backend/app/api/v1/auth.py.
+export interface SessionStatus {
+  authenticated: boolean;
+  auth_method: 'session' | 'local_dev' | null;
+  login_required: boolean;
+  actor_id: string | null;
+  csrf_token: string | null;
+}
+
+export interface LoginResponse {
+  authenticated: true;
+  auth_method: 'session';
+  actor_id: string;
+  csrf_token: string;
+  expires_at: string;
+}

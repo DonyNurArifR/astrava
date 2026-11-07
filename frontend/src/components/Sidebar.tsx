@@ -13,6 +13,7 @@ import {
   Sun,
   Sparkles,
   Target,
+  LogOut,
 } from 'lucide-react';
 import { Logo } from './Logo';
 import { useTheme } from '../context/useTheme';
@@ -33,12 +34,15 @@ interface SidebarProps {
   activeTab: NavItemKey;
   onSelectTab: (tab: NavItemKey) => void;
   pendingApprovalsCount?: number;
+  /** Shown only when the server requires operator sign-in. */
+  onLogout?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   onSelectTab,
   pendingApprovalsCount = 0,
+  onLogout,
 }) => {
   const { theme, toggleTheme } = useTheme();
 
@@ -113,6 +117,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
             CLI Subscription Ready
           </div>
         </div>
+
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center gap-2 text-xs text-slate-400 hover:text-white px-2 py-1.5 rounded hover:bg-slate-800 transition-colors"
+          >
+            <LogOut size={15} />
+            <span>Sign out</span>
+          </button>
+        )}
 
         <div className="flex items-center justify-between pt-2">
           <button

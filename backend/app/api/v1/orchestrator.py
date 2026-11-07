@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import OperatorContext, derive_client_identity, require_authorized_verifier
 from app.db.session import get_db
 from app.models.project import StudioType
 from app.orchestrator.planner import PlannerService, StructuredPlan
@@ -107,12 +108,17 @@ async def resume_pipeline(
     execution_id: uuid.UUID,
     decision_req: ApprovalDecisionRequest,
     db: AsyncSession = Depends(get_db),
+    operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> ExecutionRead:
+    # The approver identity is always server-derived; the runner never sees the client's value.
+    server_decision = decision_req.model_copy(
+        update={"decided_by": derive_client_identity(decision_req.decided_by, operator)}
+    )
     try:
         execution = await OrchestrationRunner.resume_pipeline(
             db=db,
             execution_id=execution_id,
-            decision_req=decision_req,
+            decision_req=server_decision,
         )
         return ExecutionRead.model_validate(execution)
     except ValueError as e:

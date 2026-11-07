@@ -397,7 +397,6 @@ async def test_memory_explicit_verification_endpoint(db_session: AsyncSession):
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         payload = {
-            "verified_by": "Senior QA Engineer",
             "verification_details": {
                 "test_suite": "backend/tests/test_ws_leak.py",
                 "reproduced": True,
@@ -416,7 +415,9 @@ async def test_memory_explicit_verification_endpoint(db_session: AsyncSession):
         assert data["verified_at"] is not None
         # Upgraded to verified_finding
         assert data["provenance_type"] == MemoryProvenanceType.VERIFIED_FINDING.value
-        assert data["metadata_json"]["verified_by"] == "Senior QA Engineer"
+        # Client header is ignored; verifier is the server-derived operator identity.
+        assert data["metadata_json"]["verified_by"] == "Abstract"
+        assert data["metadata_json"]["verified_by"] != "Senior QA Engineer"
 
 
 @pytest.mark.asyncio
@@ -469,7 +470,6 @@ async def test_conflict_detection_and_resolution_api(db_session: AsyncSession):
         resolve_payload = {
             "resolution": "supersede",
             "reason": "Team ratified Traefik decision over Envoy",
-            "actor_id": "operator-1",
         }
         res_res = await client.post(
             f"/api/v1/projects/{project.id}/memories/{m2.id}/resolve", json=resolve_payload

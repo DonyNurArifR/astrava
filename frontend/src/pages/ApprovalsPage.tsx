@@ -191,7 +191,7 @@ export const ApprovalsPage: React.FC = () => {
                     </td>
                     <td className="py-3 px-4 text-slate-700 dark:text-slate-300 flex items-center gap-1">
                       <User size={12} className="text-slate-400" />
-                      <span>{h.decided_by || 'Abstract'}</span>
+                      <span>{h.decided_by || '—'}</span>
                     </td>
                     <td className="py-3 px-4 text-slate-500 font-mono text-[11px]">
                       {h.decided_at ? new Date(h.decided_at).toLocaleString() : '—'}

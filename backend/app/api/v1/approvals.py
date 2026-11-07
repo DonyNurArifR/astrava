@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import OperatorContext, require_authorized_verifier
+from app.core.auth import OperatorContext, derive_client_identity, require_authorized_verifier
 from app.db.session import get_db
 from app.schemas.approval import ApprovalDecisionRequest, ApprovalRead
 from app.services.approval_service import ApprovalService
@@ -50,7 +50,7 @@ async def decide_approval(
     db: AsyncSession = Depends(get_db),
     operator: OperatorContext = Depends(require_authorized_verifier),
 ) -> ApprovalRead:
-    decided_by = decision_req.decided_by or operator.display_name
+    decided_by = derive_client_identity(decision_req.decided_by, operator)
     approval = await ApprovalService.decide(
         db,
         approval_id,

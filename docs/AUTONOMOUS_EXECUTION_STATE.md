@@ -8,7 +8,7 @@
 - **Active Branch:** `main`
 - **Alembic Head:** `6db676dd20fd`
 - **Latest Verified Commit:** `ed08f15` (M1.4-8, authored by the operator identity; confirmed as HEAD of `main` with a clean working tree before V1.5 planning began; test results below are as recorded at M1.4-8 and were not re-run during V1.5 planning)
-- **Current Blockers:** None for V1.4 as delivered. **Carried V1.4 security debt SD-01..SD-08 is open** and gates V1.5 (see `docs/V1_5_TECHNICAL_RISKS.md` section 6): 16 of 33 mutating API routes unauthenticated; artifact provenance/ownership not validated; full runner/LangGraph recovery untested; merge-target, path-prefix and fail-open worktree defects; host-side execution of agent-written code.
+- **Current Blockers:** None for V1.4 as delivered. **M1.5-1a (operator authentication and audit identity) is COMPLETE and verified: SD-01, SD-05 and SD-08 are CLOSED** (see `docs/V1_5_M1_5_1A_ACCEPTANCE_REPORT.md`). **Remaining carried V1.4 security debt (SD-02, SD-03, SD-04, SD-06, SD-07) is open** and gates V1.5 (see `docs/V1_5_TECHNICAL_RISKS.md` section 6): 16 of 33 mutating API routes unauthenticated; artifact provenance/ownership not validated; full runner/LangGraph recovery untested; merge-target, path-prefix and fail-open worktree defects; host-side execution of agent-written code.
 
 ## Milestone Status Overview
 - **Completed Milestones:** M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, V1.1, V1.2, V1.2.1, V1.3, V1.4-M1, V1.4-M2, V1.4-M2.2, V1.4-M2.2.2, V1.4-M2.2.3, V1.4-M3, V1.4-M4, V1.4-M5, V1.4-M6, V1.4-M7, V1.4-M8 (ALL COMPLETED, VERIFIED & FROZEN)
@@ -40,7 +40,8 @@
 - D4 fail-closed: isolation mandatory; no host fallback; no unsafe flag in the production path.
 - D5 model: live check withheld pending proof it cannot incur API/overage charges.
 - D6 auth: mandatory operator key on non-loopback; central enforcement; server-derived audit identity; key never in frontend JavaScript.
-- Implementation status: **NOT APPROVED / NOT STARTED.**
+- Implementation status: **M1.5-1a COMPLETE (operator auth, CSRF, server-derived audit identity, secure defaults; 522 backend / 50 frontend tests passing).** M1.5-1b, M1.5-1c, M1.5-2 and later: **NOT APPROVED / NOT STARTED.**
+- D1 credentials: Anthropic Consumer Terms section 3.7 restricts automated/non-human access except through an API key or where explicitly permitted; no `CLAUDE_CODE_OAUTH_TOKEN` minting, subscription credential injection or OAuth proxy will be built. Open architectural decision, separate from M1.5-1a.
 
 ## Release Verdict
 **ASTRAVA V1.4 ACCEPTED & VERIFIED — BASELINE FROZEN.**

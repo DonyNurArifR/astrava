@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     APP_NAME: str = "ASTRAVA"
     APP_ENV: str = "development"
     APP_PORT: int = 8000
-    APP_HOST: str = "0.0.0.0"
-    DEBUG: bool = True
+    APP_HOST: str = "127.0.0.1"
+    DEBUG: bool = False
     BRAND_TAGLINE: str = "From vision to execution."
 
     # CORS
@@ -24,6 +24,9 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
     ]
+
+    # Host header allowlist (hostnames only; port stripped, IPv6 bracketed).
+    ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1", "[::1]", "::1"]
 
     # Database URLs
     DATABASE_URL: str = "postgresql+asyncpg://astrava:astrava_dev_password@localhost:5433/astrava"
@@ -44,11 +47,16 @@ class Settings(BaseSettings):
     REQUIRE_APPROVAL_FOR_DESTRUCTIVE: bool = True
     REQUIRE_APPROVAL_FOR_DEPLOYMENT: bool = True
 
-    # Trusted operator identity (V1.4 M1.4-1).
-    # When OPERATOR_API_KEY is None, the server runs in local development mode and
-    # trusts the X-ASTRAVA-ACTOR-NAME header (defaulting to DEFAULT_OPERATOR_NAME).
+    # Operator authentication (M1.5-1a).
+    # OPERATOR_API_KEY None = local development mode: only loopback clients with an
+    # allowed Host and no forwarding headers are served. Identity is always the
+    # server-side DEFAULT_OPERATOR_NAME; client-supplied identity headers are ignored.
     DEFAULT_OPERATOR_NAME: str = "Abstract"
     OPERATOR_API_KEY: str | None = None
+    SESSION_TTL_SECONDS: int = 28800
+    COOKIE_SECURE: bool | None = None
+    LOGIN_MAX_FAILURES: int = 5
+    LOGIN_WINDOW_SECONDS: int = 300
 
 
 settings = Settings()

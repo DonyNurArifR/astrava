@@ -93,12 +93,18 @@ def _client() -> AsyncClient:
 async def test_dev_mode_context_defaults_to_default_operator(dev_mode):
     from starlette.requests import Request
 
-    scope = {"type": "http", "headers": []}
+    # Local-dev guard (M1.5-1a): loopback peer and allowed Host are required.
+    scope = {
+        "type": "http",
+        "headers": [(b"host", b"localhost:8000")],
+        "client": ("127.0.0.1", 50000),
+    }
     ctx = await get_operator_context(Request(scope))
     assert ctx.display_name == "Abstract"
     assert ctx.actor_id == "Abstract"
-    assert ctx.actor_type == "operator"
-    assert ctx.is_authenticated is True
+    assert ctx.actor_type == "operator_local_dev"
+    assert ctx.auth_method == "local_dev"
+    assert ctx.is_authenticated is False
     assert ctx.is_authorized_verifier is True
 
 
@@ -106,6 +112,7 @@ async def test_require_authorized_verifier_rejects_unauthorized_actor():
     ctx = OperatorContext(
         actor_id="viewer",
         display_name="viewer",
+        auth_method="api_key",
         is_authenticated=True,
         is_authorized_verifier=False,
     )
@@ -136,7 +143,8 @@ async def test_authorized_verification_derives_verifier_from_operator_context(
     data = res.json()
     assert data["is_verified"] is True
     assert data["provenance_type"] == MemoryProvenanceType.VERIFIED_FINDING.value
-    assert data["metadata_json"]["verified_by"] == "Tech Lead"
+    # Client-supplied X-ASTRAVA-ACTOR-NAME is ignored; server identity is recorded.
+    assert data["metadata_json"]["verified_by"] == "Abstract"
 
 
 async def test_bearer_token_authenticates_verification(db_session: AsyncSession, keyed_mode):
@@ -287,14 +295,18 @@ async def test_audit_log_records_authentic_actor(db_session: AsyncSession, keyed
         )
         assert res.status_code == 200, res.text
 
-        audit = await client.get(f"/api/v1/projects/{project.id}/memories/{mem.id}/audit")
+        audit = await client.get(
+            f"/api/v1/projects/{project.id}/memories/{mem.id}/audit",
+            headers={KEY_HEADER: OPERATOR_KEY},
+        )
     assert audit.status_code == 200
     verified_entries = [
         e for e in audit.json()["items"] if e["action"] == MemoryAuditAction.VERIFIED.value
     ]
     assert len(verified_entries) == 1
     assert verified_entries[0]["actor_type"] == "operator"
-    assert verified_entries[0]["actor_id"] == "Tech Lead"
+    # Client-supplied X-ASTRAVA-ACTOR-NAME is ignored; server identity is recorded.
+    assert verified_entries[0]["actor_id"] == "Abstract"
 
 
 # ---------------------------------------------------------------------------

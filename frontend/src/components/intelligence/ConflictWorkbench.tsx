@@ -85,7 +85,6 @@ export const ConflictWorkbench: React.FC<ConflictWorkbenchProps> = ({
       await api.resolveConflict(projectId, selectedConflict.memory_id, {
         resolution: resolutionStrategy,
         reason: resolutionReason.trim(),
-        actor_id: 'Abstract',
         merged_summary: resolutionStrategy === 'merge' ? mergedSummary.trim() : undefined,
         merged_content: resolutionStrategy === 'merge' ? mergedContent.trim() : undefined,
       });

@@ -35,5 +35,4 @@
 | **V1.4-M6** | Agent Capability Matching & Observability | **COMPLETE** | Formal capability declarations (`PlannedTask.required_capabilities`), dynamic capability-based dispatch (`CapabilityMatcher`), agent performance metrics service, REST observability endpoints, and UI KPI cards. 187/187 backend tests passing. |
 | **V1.4-M7** | Frontend Autonomous Intelligence Experience | **COMPLETE** | Goals dashboard (`GoalsPage.tsx`) for strategic objective definition and 1-click execution; Worktree sandboxing card with interactive Git Diff viewer and operator merge action; expanded Vitest suite (20/20 passing). |
 | **V1.4-M8** | Final V1.4 End-to-End Acceptance & Verification | **COMPLETE** | Full platform autonomous mission proof, comprehensive integration verification, performance profiling, and V1.4 final release freeze. |
-
-
+| **V1.5-M1.5-1a** | Operator Authentication & Audit Identity | **COMPLETE** (pending operator approval of next milestone) | Default-deny authentication on all routes, mandatory key for non-loopback with fail-closed startup, HttpOnly session cookies with CSRF protection, server-derived audit identity, secure defaults (`APP_HOST=127.0.0.1`, `DEBUG=false`), route-inventory security tests, login UI. V1.5 implementation otherwise NOT started. |

@@ -147,8 +147,9 @@
 | V1.4-M8-T5 | V1.4 | Goal Progress Real-Time Listing Recalculation | COMPLETE | `backend/app/api/v1/goals.py` | Added progress recalculation loop in `list_goals` ensuring goal progress matches completed execution tasks |
 | V1.4-M8-T6 | V1.4 | Comprehensive Regression & Verification Suite | COMPLETE | `pytest`, `vitest run`, `tsc -b && vite build` | 191/191 backend pytest passed (33.09s), 20/20 vitest passed (1.32s), 0 TS errors, clean Vite bundle (206ms) |
 | V1.4-M8-T7 | V1.4 | V1.4 Final Acceptance Report & Baseline Freeze | COMPLETE | `docs/V1_4_FINAL_ACCEPTANCE_REPORT.md` | Formal release freeze report, all 8 risks resolved (TR-01..08), baseline frozen on `main` |
-
-
-
-
-
+| V1.5-M1.5-1a-T1 | V1.5 | Config, security validation, secure defaults (`APP_HOST=127.0.0.1`, `DEBUG=false`), fail-closed startup | COMPLETE | `app/config.py`, `app/core/security_config.py`, `app/serve.py` | Startup refusal verified in real processes (short/blank key, non-loopback without key, DEBUG, COOKIE_SECURE, wildcard CORS) |
+| V1.5-M1.5-1a-T2 | V1.5 | Global default-deny authentication, request guard (Host, local-dev, Origin, content-type) | COMPLETE | `app/core/auth.py`, `app/core/guard.py`, `app/main.py` | 74-route inventory, 401 matrix, rogue-route probe, 6 mutation tests all caught |
+| V1.5-M1.5-1a-T3 | V1.5 | Signed HttpOnly session cookies, CSRF, login/session/logout, bounded rate limiter | COMPLETE | `app/core/session.py`, `app/api/v1/auth.py` | Cookie flags, CSRF 403/200, 429 with Retry-After, key absent from logs |
+| V1.5-M1.5-1a-T4 | V1.5 | Server-derived audit identity; client identity fields rejected on mismatch | COMPLETE | `approvals.py`, `memories.py`, `orchestrator.py`, `schemas/approval.py` | Actor header ignored; 8 V1.4 tests rewritten to assert the stronger contract |
+| V1.5-M1.5-1a-T5 | V1.5 | Frontend login flow, CSRF transport, removal of hard-coded identity | COMPLETE | `frontend/src/api/client.ts`, `AuthContext.tsx`, `LoginPage.tsx` | 50/50 vitest, 0 oxlint errors (14 warnings = baseline), clean build |
+| V1.5-M1.5-1a-T6 | V1.5 | Independent review remediation (5 findings) and acceptance report | COMPLETE | `docs/V1_5_M1_5_1A_ACCEPTANCE_REPORT.md` | 522/522 backend, ruff clean; SD-01, SD-05, SD-08 closed |

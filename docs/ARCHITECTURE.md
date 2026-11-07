@@ -281,6 +281,8 @@ The complete persistent project intelligence lifecycle was formally hardened and
 ## 7. V1.4 Security & Concurrency Hardening (M1.4-1)
 
 ### 7.1 Trusted Operator Identity & Verifier Attribution
+> **Superseded by M1.5-1a (section 14 and `SECURITY.md`).** The V1.4 behavior described below (client `X-ASTRAVA-ACTOR-NAME`, open local mode, per-endpoint opt-in authentication) no longer exists. Identity is now server-derived only and every route is authenticated by default.
+
 To eliminate the risk of spoofed verifier attribution (V1.3 Risk R1 / TR-01), ASTRAVA V1.4 introduces a trusted operator authentication framework in `backend/app/core/auth.py`:
 - **Operator Context (`OperatorContext`):**
   - Represents the authenticated actor with fields: `operator_id`, `display_name`, `actor_type` (`"user"`, `"agent"`, or `"system"`), `is_authenticated`, and `roles`.
@@ -554,4 +556,11 @@ Provides transparent visibility and human-in-the-loop governance over code modif
 - **Automated Vitest Suite:** Comprehensive testing in `frontend/src/__tests__/GoalsPage.test.tsx` verifying goal rendering, status filtering, modal creation, and autonomous execution dispatch.
 - **Zero Regression Invariant:** Clean Vite production build and 10/10 passing Vitest suites without errors or unhandled exceptions.
 
-
+## 14. V1.5 M1.5-1a Operator Authentication & Audit Identity
+Details and operating rules are in [`SECURITY.md`](SECURITY.md); this section records the architecture.
+- **Default-deny.** `authenticate_request` is a global dependency on the FastAPI app (`app/core/auth.py`). Routes are public only if their endpoint carries `@public_route` (exactly six). New routes are protected automatically.
+- **Guard layer.** `SecurityGuardMiddleware` (`app/core/guard.py`, pure ASGI, inside CORS) enforces Host allowlist, local-dev loopback/forwarding rules, Origin checks and JSON-only unsafe requests; the same helpers run again inside `get_operator_context`.
+- **Identity.** `OperatorContext` (`actor_id`, `display_name`, `actor_type`, `auth_method`, flags) is built only from server configuration after authentication. `actor_type` is `operator` or `operator_local_dev`.
+- **Sessions.** `app/core/session.py` implements stateless HMAC-signed cookies and per-session CSRF tokens derived from the operator key (stdlib only); `app/api/v1/auth.py` exposes login/session/logout with a bounded per-peer rate limiter.
+- **Startup validation.** `app/core/security_config.py` is called from the lifespan; unsafe configuration aborts startup. Supported entrypoint: `app/serve.py`.
+- **Frontend.** All API calls go through one `request()` wrapper (same-origin credentials, in-memory CSRF token, 401 event); `AuthContext` and `LoginPage` gate the app only when `login_required`. No key in JavaScript or build config.

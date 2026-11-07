@@ -6,6 +6,9 @@ from app.config import settings
 
 os.environ["APP_ENV"] = "test"
 settings.APP_ENV = "test"
+# httpx ASGITransport sends Host "test" from a loopback peer (127.0.0.1); allow that host only.
+if "test" not in settings.ALLOWED_HOSTS:
+    settings.ALLOWED_HOSTS.append("test")
 
 
 @pytest.fixture(autouse=True)

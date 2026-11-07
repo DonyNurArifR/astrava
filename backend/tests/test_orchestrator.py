@@ -151,7 +151,6 @@ async def test_orchestrator_execution_and_approval_flow():
                 json={
                     "decision": ApprovalStatus.APPROVED,
                     "reason": "Authorized release",
-                    "decided_by": "qa_lead",
                 },
             )
             assert resume_res.status_code == 200

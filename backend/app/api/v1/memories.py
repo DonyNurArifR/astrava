@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import OperatorContext, require_authorized_verifier
+from app.core.auth import OperatorContext, derive_client_identity, require_authorized_verifier
 from app.db.session import get_db
 from app.models.memory import (
     MemoryCategory,
@@ -391,11 +391,7 @@ async def verify_memory(
     client-supplied ``verified_by`` must match it or the request is rejected.
     Upgrades AGENT_CONCLUSION provenance to VERIFIED_FINDING.
     """
-    if data.verified_by is not None and data.verified_by != operator.display_name:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot impersonate verifier; identity derived from authenticated operator context",
-        )
+    derive_client_identity(data.verified_by, operator, subject="verifier")  # 403 on mismatch
 
     await _verify_project_exists(db, project_id)
 
@@ -441,7 +437,7 @@ async def resolve_conflict(
             project_id=project_id,
             memory_id=memory_id,
             resolution=data.resolution,
-            actor_id=data.actor_id or operator.actor_id,
+            actor_id=derive_client_identity(data.actor_id, operator),
             reason=data.reason or f"Resolved by {operator.display_name} via REST API",
             merged_summary=data.merged_summary,
             merged_content=data.merged_content,

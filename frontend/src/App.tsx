@@ -3,6 +3,9 @@ import { Sidebar } from './components/Sidebar';
 import type { NavItemKey } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ThemeProvider } from './context/ThemeContext';
+import { AuthProvider } from './context/AuthContext';
+import { useAuth } from './context/useAuth';
+import { LoginPage } from './pages/LoginPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { CommandCenterPage } from './pages/CommandCenterPage';
 import { GoalsPage } from './pages/GoalsPage';
@@ -19,6 +22,7 @@ export const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavItemKey>('overview');
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const { loginRequired, logout } = useAuth();
 
   const fetchApprovalsCount = () => {
     api
@@ -72,6 +76,7 @@ export const AppContent: React.FC = () => {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         pendingApprovalsCount={pendingApprovalsCount}
+        onLogout={loginRequired ? () => void logout() : undefined}
       />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -99,10 +104,23 @@ export const AppContent: React.FC = () => {
   );
 };
 
+/** Shows the sign-in screen only when the server requires an operator session and none is active. */
+const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { status, loginRequired, authenticated } = useAuth();
+  if (status === 'ready' && loginRequired && !authenticated) {
+    return <LoginPage />;
+  }
+  return <>{children}</>;
+};
+
 export default function App() {
   return (
     <ThemeProvider>
-      <AppContent />
+      <AuthProvider>
+        <AuthGate>
+          <AppContent />
+        </AuthGate>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

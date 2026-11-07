@@ -11,8 +11,13 @@ from app.models.task import RiskLevel
 class ApprovalDecisionRequest(BaseModel):
     decision: ApprovalStatus  # APPROVED or REJECTED
     reason: str | None = Field(None, max_length=2000, description="Operator rationale")
-    decided_by: str = Field(
-        "Abstract", min_length=1, max_length=100, description="Approver display name"
+    # Optional and advisory only: the server derives the approver identity from the
+    # authenticated operator. A value that differs from it is rejected with 403.
+    decided_by: str | None = Field(
+        None,
+        min_length=1,
+        max_length=100,
+        description="Approver display name (must match operator)",
     )
 
 

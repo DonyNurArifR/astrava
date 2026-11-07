@@ -356,7 +356,6 @@ async def test_simultaneous_resumes_and_concurrency_resilience():
                     json={
                         "decision": ApprovalStatus.APPROVED.value,
                         "reason": f"Simultaneous approver #{i}",
-                        "decided_by": f"Operator_{i}",
                     },
                 )
                 for i in range(3)

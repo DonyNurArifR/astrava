@@ -47,7 +47,6 @@ export const MemoryDetailModal: React.FC<MemoryDetailModalProps> = ({
 
   // Verification modal state
   const [showVerifyModal, setShowVerifyModal] = useState(false);
-  const [verifierName, setVerifierName] = useState('Abstract');
   const [verifyReason, setVerifyReason] = useState('');
   const [verifying, setVerifying] = useState(false);
 
@@ -83,8 +82,8 @@ export const MemoryDetailModal: React.FC<MemoryDetailModalProps> = ({
     e.preventDefault();
     setVerifying(true);
     try {
+      // The verifier is the server-derived operator; it is shown read-only from the response.
       const verified = await api.verifyMemory(projectId, memory.id, {
-        verified_by: verifierName.trim() || 'Abstract',
         reason: verifyReason.trim() || 'Verified via Memory Bank UI',
       });
       onMemoryUpdated(verified);
@@ -445,18 +444,9 @@ export const MemoryDetailModal: React.FC<MemoryDetailModalProps> = ({
                 with persistent audit attribution.
               </p>
               <form onSubmit={handleVerify} className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Verifier Identifier
-                  </label>
-                  <input
-                    type="text"
-                    value={verifierName}
-                    onChange={e => setVerifierName(e.target.value)}
-                    className="w-full text-xs px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
-                    required
-                  />
-                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Recorded as the signed-in operator.
+                </p>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Verification Reason / Evidence Notes

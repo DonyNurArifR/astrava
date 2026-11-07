@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.config import settings
+from app.core.auth import public_route
 
 router = APIRouter(tags=["Health"])
 
@@ -21,6 +22,7 @@ class ReadyResponse(BaseModel):
 
 
 @router.get("/healthz", response_model=HealthResponse)
+@public_route
 async def health_check() -> HealthResponse:
     """Basic liveness check."""
     return HealthResponse(
@@ -33,6 +35,7 @@ async def health_check() -> HealthResponse:
 
 
 @router.get("/readyz", response_model=ReadyResponse)
+@public_route
 async def readiness_check() -> ReadyResponse:
     """Readiness probe checking storage and service availability."""
     storage_ok = settings.ARTIFACT_STORAGE_PATH.exists()

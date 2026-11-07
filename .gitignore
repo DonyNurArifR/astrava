@@ -78,3 +78,6 @@ scratch/
 graphify-out/
 *.sqlite3
 *.db
+
+# Local Claude Code settings (never commit)
+.claude/

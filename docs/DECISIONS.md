@@ -199,8 +199,15 @@
   3. *Delivery Freeze:* Declare ASTRAVA V1.4 complete and freeze the repository baseline.
 - **Consequences:** Formally delivers all V1.4 capabilities, resolves all architectural risks (TR-01 through TR-07), and establishes a certified, frozen baseline for production deployment and future development.
 
-
-
-
-
+## ADR-024: V1.5 M1.5-1a Operator Authentication & Audit Identity
+- **Status:** Accepted (implemented; see `docs/V1_5_M1_5_1A_ACCEPTANCE_REPORT.md`)
+- **Context:** The V1.5 plan gives the API process access to a container runtime, which makes API compromise far more severe. At V1.4, 16 of 33 mutating routes and all GET routes were unauthenticated, an unset `OPERATOR_API_KEY` trusted every caller, the audit actor could come from a client header, and the server defaulted to `0.0.0.0` with `DEBUG=true` (SD-01, SD-05, SD-08).
+- **Decision:**
+  1. *Default-deny global dependency* instead of per-endpoint opt-in; six explicit public routes.
+  2. *Two modes:* keyed (Bearer/key header/session cookie) and local-dev (key unset; loopback peer, allowlisted Host, no forwarding headers). No `APP_ENV`-based bypass; tests extend `ALLOWED_HOSTS` only.
+  3. *Fail closed at startup* for blank/short keys, non-loopback bind without a key, DEBUG or wildcard origins/hosts on non-loopback; plus request-time guards because uvicorn's `--host` is invisible to the app.
+  4. *Stateless signed session cookie* (HMAC key derived from the operator key; HttpOnly, SameSite=Strict, Secure by rule) with derived per-session CSRF tokens, Origin checks and JSON-only unsafe requests. Chosen over a DB-backed session table to avoid a migration in this milestone; in-memory revocation is a documented limitation.
+  5. *Server-derived identity only;* `actor_type` distinguishes `operator` from `operator_local_dev`; legacy identity body fields must match the server or get `403`.
+  6. *Secure defaults:* `APP_HOST=127.0.0.1`, `DEBUG=false`, docs only in DEBUG.
+- **Consequences:** Closes SD-01, SD-05, SD-08 and unblocks M1.5-2 from the authentication standpoint. Existing clients must authenticate or run on loopback; the frontend gained a login flow. Single shared operator key remains (no RBAC). Residual risks are listed in `docs/SECURITY.md` section 8.
 
