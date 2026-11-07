@@ -5,6 +5,7 @@ import { Header } from './components/Header';
 import { ThemeProvider } from './context/ThemeContext';
 import { OverviewPage } from './pages/OverviewPage';
 import { CommandCenterPage } from './pages/CommandCenterPage';
+import { GoalsPage } from './pages/GoalsPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ExecutionsPage } from './pages/ExecutionsPage';
 import { ArtifactsPage } from './pages/ArtifactsPage';
@@ -44,6 +45,8 @@ export const AppContent: React.FC = () => {
         return { title: 'Executive Overview', subtitle: 'Platform-wide production metrics and activity' };
       case 'command-center':
         return { title: 'Autonomous Command Center', subtitle: 'Interactive planning and task orchestration' };
+      case 'goals':
+        return { title: 'Strategic Goals & Outcomes', subtitle: 'Project outcomes decomposed into adaptive execution graphs' };
       case 'agents':
         return { title: 'Autonomous Agent Registry', subtitle: 'Specialized agent capabilities, instructions, and execution schemas' };
       case 'projects':
@@ -82,6 +85,7 @@ export const AppContent: React.FC = () => {
         <main className="flex-1 overflow-y-auto">
           {activeTab === 'overview' && <OverviewPage onNavigate={setActiveTab} />}
           {activeTab === 'command-center' && <CommandCenterPage />}
+          {activeTab === 'goals' && <GoalsPage />}
           {activeTab === 'agents' && <AgentsPage />}
           {activeTab === 'projects' && <ProjectsPage />}
           {activeTab === 'executions' && <ExecutionsPage />}

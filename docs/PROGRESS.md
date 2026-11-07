@@ -135,6 +135,12 @@
 | V1.4-M6-T5 | V1.4 | Agent Metrics REST API Endpoints | COMPLETE | `backend/app/api/v1/agents.py` | `GET /api/v1/agents/metrics` and `GET /api/v1/agents/{slug}/metrics` |
 | V1.4-M6-T6 | V1.4 | Frontend Agent Metrics KPI Display & Types | COMPLETE | `AgentsPage.tsx`, `client.ts`, `types/api.ts` | Capability badges, real-time KPI bar (success rate, task count, remediations), 16/16 vitest passing |
 | V1.4-M6-T7 | V1.4 | Capability Matching & Observability Test Suite | COMPLETE | `test_v1_4_agent_capabilities.py`, `tests/` | 5/5 capability tests passing; full backend suite 187/187 passing in 32.79s; clean Vite build |
+| V1.4-M7-T1 | V1.4 | Strategic Goals Dashboard (`GoalsPage.tsx`) | COMPLETE | `frontend/src/pages/GoalsPage.tsx` | Full goal definition, status filtering, progress meters, target criteria display, and 1-click execution dispatch |
+| V1.4-M7-T2 | V1.4 | Navigation & App Routing Integration | COMPLETE | `frontend/src/components/Sidebar.tsx`, `App.tsx` | Added `/goals` route with `Target` icon across desktop and mobile shell |
+| V1.4-M7-T3 | V1.4 | Worktree Sandboxing & Unified Git Diff Viewer | COMPLETE | `frontend/src/pages/ExecutionsPage.tsx` | Worktree sandboxing card, interactive git diff inspection, file statistics, operator merge trigger |
+| V1.4-M7-T4 | V1.4 | Frontend Test Suite Expansion | COMPLETE | `frontend/src/__tests__/GoalsPage.test.tsx` | 4 new tests covering rendering, filtering, creation, and execution; 20/20 vitest passing in 1.32s |
+| V1.4-M7-T5 | V1.4 | Production Build & Lint Verification | COMPLETE | `npm run build`, `ruff check` | Clean Vite production bundle in 174ms, 0 TypeScript errors, 187/187 backend tests passing |
+
 
 
 

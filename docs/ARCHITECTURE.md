@@ -534,3 +534,24 @@ Provides granular insight into agent effectiveness, reliability, and cost-effici
   - `GET /api/v1/agents/{slug}/metrics`: Returns detailed performance metrics for a specific agent persona.
   - `AgentsPage.tsx`: Displays interactive capability tags and real-time performance KPI cards (success rate, task count, remediation count).
 
+---
+
+## 13. V1.4 Frontend Autonomous Intelligence Experience (M1.4-7)
+
+### 13.1 Strategic Goals Dashboard (`GoalsPage.tsx`)
+Unifies high-level strategic objectives with autonomous pipeline execution:
+- **Strategic Goal Lifecycle:** Supports defining, viewing, filtering, and executing `ProjectGoal` entities. Displays real-time progress meters, target criteria checklists, and lifecycle status badges (`pending`, `in_progress`, `achieved`, `paused`, `cancelled`).
+- **Autonomous Execution Trigger:** Allows operators to trigger end-to-end autonomous decomposition and execution with a single click (`POST /api/v1/projects/{project_id}/goals/{goal_id}/execute`), providing immediate feedback with execution IDs.
+- **Project Scoping & Filtering:** Dedicated project selector with studio type indicators and filter tabs for quick status toggling.
+
+### 13.2 Worktree Sandboxing & Git Diff Viewer (`ExecutionsPage.tsx`)
+Provides transparent visibility and human-in-the-loop governance over code modifications:
+- **Worktree Sandboxing Card:** In the execution inspector drawer, displays the active sandboxed branch name (`astrava/exec-<id>`) and worktree storage directory path.
+- **Interactive Unified Diff Inspection:** Integrates with `GET /api/v1/executions/{id}/diff` to display modified file lists, insertion/deletion counts, and highlighted unified patch diffs directly in the browser.
+- **Operator Merge Trigger:** Enables authenticated operators to trigger `merge_worktree` directly from the interface (`POST /api/v1/executions/{id}/merge`), safely merging verified branches into the repository base branch with full status confirmation.
+
+### 13.3 Test Suite & Quality Verification
+- **Automated Vitest Suite:** Comprehensive testing in `frontend/src/__tests__/GoalsPage.test.tsx` verifying goal rendering, status filtering, modal creation, and autonomous execution dispatch.
+- **Zero Regression Invariant:** Clean Vite production build and 10/10 passing Vitest suites without errors or unhandled exceptions.
+
+

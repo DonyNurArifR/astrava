@@ -175,6 +175,18 @@
   4. *REST Endpoints & UI Visualization:* Expose `GET /api/v1/agents/metrics` and `GET /api/v1/agents/{slug}/metrics`. Render live performance KPI cards directly on `AgentsPage.tsx`.
 - **Consequences:** Eliminates hardcoded agent bindings; routes tasks based on capabilities; enables data-driven agent selection and continuous performance observability.
 
+## ADR-022: Frontend Autonomous Intelligence Experience (M1.4-7)
+- **Status:** Accepted
+- **Context:** Delivering end-to-end autonomous intelligence requires operators to formulate high-level project goals, monitor multi-wave dynamic executions, inspect ephemeral Git worktree modifications, and review unified diffs before merging.
+- **Decision:**
+  1. *Strategic Goals Dashboard (`GoalsPage.tsx`):* Provide a comprehensive interface for defining, tracking, and executing `ProjectGoal` entities. Render goal status badges (`pending`, `in_progress`, `achieved`, `paused`, `cancelled`), target acceptance criteria checklists, and visual progress meters. Trigger dynamic goal decomposition and execution with 1-click execution dispatch.
+  2. *Navigation & Sidebar Integration:* Add `/goals` navigation item with `Target` icon across desktop and mobile menus.
+  3. *Worktree Sandboxing & Git Diff Viewer (`ExecutionsPage.tsx`):* Add Worktree Sandboxing card to the execution drawer showing the active branch (`astrava/exec-<id>`) and worktree path. Provide an interactive "Inspect Git Diff" viewer rendering changed files, insertions/deletions stats, and unified patch syntax.
+  4. *Operator Merge Trigger:* Enable authenticated operators to trigger `merge_worktree` directly from the UI, committing and merging changes cleanly into the project's base branch with real-time feedback.
+  5. *Test Suite Expansion:* Add `frontend/src/__tests__/GoalsPage.test.tsx` verifying goal rendering, status filtering, modal creation, and execution triggers.
+- **Consequences:** Unifies autonomous intelligence capabilities into an intuitive operator console; provides real-time visibility into goal progress and code changes; guarantees safe, sandboxed code modification with human operator merge control.
+
+
 
 
 

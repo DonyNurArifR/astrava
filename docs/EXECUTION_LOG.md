@@ -880,3 +880,31 @@
   - Added Section 12 in `docs/ARCHITECTURE.md`.
   - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.
 
+## 2026-11-07 — V1.4-M7: Frontend Autonomous Intelligence Experience
+- **Role Alignment:** Lead AI Architect & Development Orchestrator: Gemini. Implementation Engine: Claude Haiku 5.5 (`claude-haiku-5-5`).
+- **Milestone Scope:** Deliver unified operator interface for defining strategic goals, tracking autonomous execution progress, inspecting sandboxed Git worktree diffs, and executing operator merges (M1.4-7).
+- **Core Architecture & Implementation:**
+  - **Strategic Goals Dashboard (`frontend/src/pages/GoalsPage.tsx`):**
+    - Project selector with studio type indicators.
+    - Lifecycle status filtering (`all`, `active`, `achieved`, `paused`, `cancelled`).
+    - Visual progress meters, target criteria checklists, and creation modal.
+    - 1-click autonomous execution trigger (`api.executeGoal`).
+  - **Navigation Integration (`Sidebar.tsx`, `App.tsx`):**
+    - Added `/goals` route with `Target` icon.
+  - **Worktree Sandboxing & Git Diff Viewer (`ExecutionsPage.tsx`):**
+    - Sandboxing info card showing active branch (`astrava/exec-<id>`) and worktree path.
+    - Interactive "Inspect Git Diff" viewer with modified files, insertions/deletions, and unified patch display.
+    - Operator-authenticated "Merge to Base" action.
+  - **Test Suite Expansion:**
+    - Created `frontend/src/__tests__/GoalsPage.test.tsx` (4 tests: rendering, filtering, modal creation, execution feedback).
+- **Verification & Acceptance:**
+  - Frontend Vitest suite: **10/10 test files (20 tests) passed** in 1.32s.
+  - Vite production bundle: `tsc -b && vite build` built cleanly in 174ms.
+  - Backend pytest suite: **187/187 tests passed** in 31.76s.
+  - Code hygiene: `ruff check` and `ruff format` 100% clean across all 109 backend files.
+- **Documentation & Tracking:**
+  - Added ADR-022 in `docs/DECISIONS.md`.
+  - Added Section 13 in `docs/ARCHITECTURE.md`.
+  - Updated `docs/ROADMAP.md`, `docs/PROGRESS.md`, and `docs/AUTONOMOUS_EXECUTION_STATE.md`.
+
+

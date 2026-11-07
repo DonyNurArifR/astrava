@@ -12,6 +12,7 @@ import {
   Moon,
   Sun,
   Sparkles,
+  Target,
 } from 'lucide-react';
 import { Logo } from './Logo';
 import { useTheme } from '../context/useTheme';
@@ -19,6 +20,7 @@ import { useTheme } from '../context/useTheme';
 export type NavItemKey =
   | 'overview'
   | 'command-center'
+  | 'goals'
   | 'agents'
   | 'projects'
   | 'executions'
@@ -43,6 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navItems = [
     { key: 'overview', label: 'Overview', icon: LayoutDashboard },
     { key: 'command-center', label: 'Command Center', icon: Terminal, badge: 'Live' },
+    { key: 'goals', label: 'Strategic Goals', icon: Target },
     { key: 'agents', label: 'Agent Registry', icon: Bot },
     { key: 'projects', label: 'Projects', icon: FolderKanban },
     { key: 'executions', label: 'Executions', icon: PlayCircle },

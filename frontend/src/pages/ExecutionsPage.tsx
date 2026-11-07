@@ -10,9 +10,12 @@ import {
   AlertTriangle,
   ShieldCheck,
   FileCheck,
+  GitBranch,
+  GitMerge,
+  FileCode,
 } from 'lucide-react';
 import { api } from '../api/client';
-import type { Execution } from '../types/api';
+import type { Execution, GitDiffResult } from '../types/api';
 import { BudgetIndicator } from '../components/budget/BudgetIndicator';
 
 export const ExecutionsPage: React.FC = () => {
@@ -21,6 +24,12 @@ export const ExecutionsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Git Worktree Sandboxing & Diff Viewer
+  const [diffResult, setDiffResult] = useState<GitDiffResult | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [mergeLoading, setMergeLoading] = useState(false);
+  const [mergeMsg, setMergeMsg] = useState<string | null>(null);
 
   const loadExecutions = useCallback(() => {
     api
@@ -63,6 +72,33 @@ export const ExecutionsPage: React.FC = () => {
       setError(err.message);
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleLoadDiff = async (id: string) => {
+    setDiffLoading(true);
+    setMergeMsg(null);
+    try {
+      const data = await api.getExecutionDiff(id);
+      setDiffResult(data);
+    } catch (err: any) {
+      setError(`Failed to load git diff: ${err.message}`);
+    } finally {
+      setDiffLoading(false);
+    }
+  };
+
+  const handleMergeWorktree = async (id: string) => {
+    setMergeLoading(true);
+    setMergeMsg(null);
+    try {
+      const res = await api.mergeExecutionWorktree(id);
+      setMergeMsg(res.message);
+      loadExecutions();
+    } catch (err: any) {
+      setError(`Failed to merge worktree: ${err.message}`);
+    } finally {
+      setMergeLoading(false);
     }
   };
 
@@ -282,6 +318,87 @@ export const ExecutionsPage: React.FC = () => {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Git Worktree Sandboxing & Diff Viewer (M1.4-5 & M1.4-7) */}
+              {(selectedExecution.worktree_branch || selectedExecution.worktree_path) && (
+                <div className="space-y-3 p-3.5 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <GitBranch size={16} className="text-blue-500" />
+                      <h4 className="font-bold text-xs text-slate-900 dark:text-white">
+                        Isolated Worktree Sandboxing
+                      </h4>
+                    </div>
+                    {selectedExecution.worktree_branch && (
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                        {selectedExecution.worktree_branch}
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] font-mono text-slate-500 truncate">
+                    Path: {selectedExecution.worktree_path || 'Ephemeral storage'}
+                  </p>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={() => handleLoadDiff(selectedExecution.id)}
+                      disabled={diffLoading}
+                      className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-200 shadow-xs"
+                    >
+                      <FileCode size={13} />
+                      {diffLoading ? 'Loading diff...' : 'Inspect Git Diff'}
+                    </button>
+
+                    <button
+                      onClick={() => handleMergeWorktree(selectedExecution.id)}
+                      disabled={mergeLoading || selectedExecution.status === 'running'}
+                      className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs disabled:opacity-50"
+                    >
+                      <GitMerge size={13} />
+                      {mergeLoading ? 'Merging...' : 'Merge to Base'}
+                    </button>
+                  </div>
+
+                  {mergeMsg && (
+                    <div className="p-2 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-xs font-mono">
+                      {mergeMsg}
+                    </div>
+                  )}
+
+                  {diffResult && (
+                    <div className="mt-2 space-y-2 border-t border-slate-200 dark:border-slate-800 pt-2">
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="text-slate-500">
+                          {diffResult.files_changed.length} file(s) changed
+                        </span>
+                        <div className="flex gap-2">
+                          <span className="text-emerald-600 dark:text-emerald-400">+{diffResult.insertions}</span>
+                          <span className="text-red-600 dark:text-red-400">-{diffResult.deletions}</span>
+                        </div>
+                      </div>
+
+                      {diffResult.files_changed.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {diffResult.files_changed.map((f, i) => (
+                            <span key={i} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                              {f}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {diffResult.diff_text ? (
+                        <pre className="p-2.5 rounded bg-slate-950 text-slate-300 font-mono text-[10px] max-h-48 overflow-y-auto whitespace-pre-wrap">
+                          {diffResult.diff_text}
+                        </pre>
+                      ) : (
+                        <p className="text-[11px] text-slate-400 italic">No diff detected against base branch.</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
