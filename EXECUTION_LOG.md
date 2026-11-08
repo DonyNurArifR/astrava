@@ -111,3 +111,13 @@ Historical product-delivery log (M0 to V1.4 and the M1.5-1a summary): `docs/EXEC
 ### [CP-007] CLAUDE+AGY — IMPLEMENT/VALIDATE: M1.5-1c
 - Implemented lease+epoch (migration b7c1d2e3f4a5), orphan reservation settlement, attempt-number fix, recover_execution + CLI, terminal-state guard, task identity, checkpoints. 38 new tests (real-process SIGKILL scenarios A-H on throw-away databases). Backend 834 passed, ruff clean. Mutation: 13 guards, 12 killed, 1 redundant layer; 3 initial survivors closed by new tests.
 - Agy implementation review: ACCEPT WITH FIXES (no Critical/High); M-01..M-03, L-01 fixed. **Next:** commit and push M1.5-1c; STOP; await authorization for M1.5-2.
+
+### [CP-008] OPERATOR — ACCEPT: M1.5-1c with limitations
+- Accepted at `28eea99dd6f91066e531119e8b5af8a99d95827a`. Recorded: 834 backend tests reported passing; eight process-level recovery scenarios (A-H); mutation testing 12 of 13 guards killed (M8 redundant layer); remaining debt per `docs/V1_5_M1_5_1C_ACCEPTANCE_REPORT.md` section 5-6. **Provider invocation after a crash remains at-least-once; exactly-once is not claimed.** M1.5-1b residuals (worktree artifact retrieval, intermediate-directory TOCTOU, repo-local git config, tracked-only dirty check) and SD-07, D1, D5 remain open.
+
+### [CP-008] OPERATOR — DIRECTIVE: M1.5-2 architecture review (planning only)
+- Operator does not approve unrestricted Docker daemon access from the API process; evaluate a privilege-separated broker architecture. No source, migrations, dependencies, image builds, containers, Docker access grants, credential experiments, billing or deployment. Deliverable: revised architecture assessment plus proposed M1.5-2 sequence for approval, then STOP.
+
+### [CP-008] CLAUDE+AGY — PLAN: M1.5-2 privilege-separated architecture (planning only)
+- Read-only host checks: Docker Desktop 29.8.0, runc only, socket owned by the operator user (so a same-user broker is NOT a boundary against API code execution), Postgres published on 0.0.0.0:5433, default file sharing. Wrote `docs/V1_5_M1_5_2_ARCHITECTURE_REASSESSMENT.md`: broker with nine-operation closed contract (no generic proxy), tiers A/B, 15-row threat model, Docker Desktop verdict (partial boundary), tree-export transfer, recovery ordering with M1.5-1c, limits, tests, debt classification, revised graph and sequence 2a/2b/2c. Appended roadmap Amendment A3 and ADR-028 (Proposed).
+- Agy review: no Critical; ACCEPT WITH CHANGES (H-01 changed-path export, H-02 3b needs 2c, M-01..M-03, L-01), all adopted. No source, migration, dependency, image, container, Docker grant, credential or billing action was taken. **Next:** operator decision on the proposed sequence; STOP. Documentation changes are uncommitted pending approval.

@@ -164,3 +164,6 @@ M1.5-6  adversarial acceptance + freeze                     needs 5
 
 ## Amendment A2 (2026-11-07) — M1.5-1c
 *Appended; nothing above was rewritten.* **M1.5-1c is delivered** (lease + epoch fencing, orphan reservation settlement, retry-aware attempt numbering, explicit `recover_execution`; SD-03 and SD-04 closed). M1.5-4 still requires 1a, 1b, 1c, 3, 4a (4a blocked by D1). M1.5-2 is the next dependency-ready milestone and needs separate operator authorization. Evidence: `V1_5_M1_5_1C_ACCEPTANCE_REPORT.md`.
+
+## Amendment A3 (2026-11-08) — M1.5-2 re-scoped (planning only)
+*Appended; nothing above was rewritten.* The operator withdrew approval for giving the API process Docker access. M1.5-2 is re-planned as a privilege-separated **Worker Broker** with a closed typed contract (sub-milestones 2a contract/fake runtime, 2b broker Docker backend, 2c workspace transfer), verification containerization (4v) may precede D1, and the git-bundle import is replaced by tree export. Full text, threat model, contract and revised graph: `V1_5_M1_5_2_ARCHITECTURE_REASSESSMENT.md`. **Not authorized for implementation.**
