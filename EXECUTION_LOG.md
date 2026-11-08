@@ -121,3 +121,10 @@ Historical product-delivery log (M0 to V1.4 and the M1.5-1a summary): `docs/EXEC
 ### [CP-008] CLAUDE+AGY — PLAN: M1.5-2 privilege-separated architecture (planning only)
 - Read-only host checks: Docker Desktop 29.8.0, runc only, socket owned by the operator user (so a same-user broker is NOT a boundary against API code execution), Postgres published on 0.0.0.0:5433, default file sharing. Wrote `docs/V1_5_M1_5_2_ARCHITECTURE_REASSESSMENT.md`: broker with nine-operation closed contract (no generic proxy), tiers A/B, 15-row threat model, Docker Desktop verdict (partial boundary), tree-export transfer, recovery ordering with M1.5-1c, limits, tests, debt classification, revised graph and sequence 2a/2b/2c. Appended roadmap Amendment A3 and ADR-028 (Proposed).
 - Agy review: no Critical; ACCEPT WITH CHANGES (H-01 changed-path export, H-02 3b needs 2c, M-01..M-03, L-01), all adopted. No source, migration, dependency, image, container, Docker grant, credential or billing action was taken. **Next:** operator decision on the proposed sequence; STOP. Documentation changes are uncommitted pending approval.
+
+### [CP-009] OPERATOR — DECISIONS: sequence approved, commit docs, authorize M1.5-2a only
+- Committed and pushed the five CP-008 documentation files as `5cfdea5` (ADR-028 still Proposed). Approved 2a -> 2b -> 2c with separate authorizations; tier A dev-only, tier B before broader use; Docker file-sharing narrowing and Postgres 127.0.0.1 rebind only after an exact-change report; 4v before D1.
+
+### [CP-009] CLAUDE — IMPLEMENT: M1.5-2a (no Docker)
+- Built broker package, runtime layer, `worker_runs` migration, recovery integration, static guards. Tests found and I fixed: SQLite ledger lock after replay, uvicorn chmod 0666 on the socket. Mutation: 40 mutants, 7 initial survivors (one real ordering gap), all killed after new tests. Agy review ACCEPT WITH CHANGES (L-01, L-02 fixed). Backend 1075 passed; ruff, mypy (ephemeral) clean; leftover DB and temp dirs cleaned. **Next:** operator acceptance; STOP; 2b needs separate authorization.
+

@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     # Execution ownership lease (M1.5-1c): a runner heartbeats at ttl/3; a lease that has not been
     # renewed for EXECUTION_LEASE_TTL_SECONDS may be claimed by a recovering runner.
     EXECUTION_LEASE_TTL_SECONDS: float = 60.0
+    # Worker runtime (M1.5-2a). "disabled" (default) = no workers. "broker" = the privilege-
+    # separated worker broker over a Unix socket. The API never talks to Docker.
+    WORKER_RUNTIME: str = "disabled"
+    BROKER_SOCKET_PATH: Path | None = None
+    BROKER_KEY_FILE: Path | None = None
+    BROKER_REQUEST_TIMEOUT_SECONDS: float = 10.0
     DATABASE_URL: str = "postgresql+asyncpg://astrava:astrava_dev_password@localhost:5433/astrava"
     DATABASE_URL_SYNC: str = "postgresql://astrava:astrava_dev_password@localhost:5433/astrava"
 

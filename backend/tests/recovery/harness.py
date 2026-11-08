@@ -70,6 +70,8 @@ class RecoveryEnv:
     db_name: str
     root: Path
     procs: list[Proc] = field(default_factory=list)
+    extra_env: dict = field(default_factory=dict)
+    broker: "Proc | None" = None
 
     def __post_init__(self) -> None:
         self.async_url, self.sync_url = _urls(self.db_name)
@@ -88,7 +90,83 @@ class RecoveryEnv:
             EXECUTION_LEASE_TTL_SECONDS=str(LEASE_TTL),
             PYTHONPATH=str(BACKEND),
         )
+        env.update(self.extra_env)
         return env
+
+    # ---- worker broker (M1.5-2a) ---------------------------------------------------------
+    @property
+    def broker_dir(self) -> Path:
+        return self.root / "b"
+
+    @property
+    def broker_socket(self) -> Path:
+        return self.broker_dir / "s"
+
+    def configure_broker_client(self) -> None:
+        """Point API-side subprocesses at the broker (WORKER_RUNTIME=broker)."""
+        key = self.root / "broker.key"
+        if not key.exists():
+            key.write_bytes(b"process-level-test-key-0123456789abcdef")
+            key.chmod(0o600)
+        assert len(str(self.broker_socket)) < 100, "unix socket path too long"
+        self.extra_env.update(
+            WORKER_RUNTIME="broker",
+            BROKER_SOCKET_PATH=str(self.broker_socket),
+            BROKER_KEY_FILE=str(key),
+            BROKER_REQUEST_TIMEOUT_SECONDS="5",
+        )
+
+    def spawn_broker(self, **extra: str) -> "Proc":
+        self.configure_broker_client()
+        out = self.root / f"broker-{len(self.procs)}.out"
+        env = dict(os.environ)
+        env.update(
+            PYTHONPATH=str(BACKEND),
+            ASTRAVA_BROKER_SOCKET=str(self.broker_socket),
+            ASTRAVA_BROKER_KEY_FILE=str(self.root / "broker.key"),
+            ASTRAVA_BROKER_STATE_DIR=str(self.broker_dir / "state"),
+            ASTRAVA_BROKER_BACKEND="fake",
+            ASTRAVA_BROKER_MAX_ACTIVE="8",
+            ASTRAVA_BROKER_REAPER_INTERVAL="0.5",
+            **extra,
+        )
+        popen = subprocess.Popen(
+            [sys.executable, "-m", "astrava_broker"],
+            cwd=BACKEND,
+            env=env,
+            stdout=out.open("w"),
+            stderr=subprocess.STDOUT,
+        )
+        proc = Proc(popen, "broker", out)
+        self.procs.append(proc)
+        self.broker = proc
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            if self.broker_socket.exists():
+                return proc
+            if popen.poll() is not None:
+                raise RuntimeError(f"broker exited early: {out.read_text()}")
+            time.sleep(0.1)
+        raise TimeoutError("broker socket never appeared")
+
+    def broker_workers(self) -> dict[str, dict]:
+        """Read the broker's persisted worker records (the fake backend's 'container labels')."""
+        import sqlite3
+
+        path = self.broker_dir / "state" / "fake_workers.sqlite3"
+        if not path.exists():
+            return {}
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            return {r[0]: json.loads(r[1]) for r in con.execute("SELECT id, data FROM workers")}
+        finally:
+            con.close()
+
+    def broker_audit(self) -> list[dict]:
+        path = self.broker_dir / "state" / "audit.log"
+        if not path.exists():
+            return []
+        return [json.loads(x) for x in path.read_text().splitlines()]
 
     def migrate(self) -> None:
         subprocess.run(
@@ -204,6 +282,19 @@ class RecoveryEnv:
                     e=execution_id,
                 )
             ],
+            "event_times": {
+                r["event_type"]: r["created_at"].timestamp()
+                for r in q(
+                    "SELECT event_type, created_at FROM execution_events WHERE execution_id=:e "
+                    "ORDER BY created_at",
+                    e=execution_id,
+                )
+            },
+            "worker_runs": q(
+                "SELECT id::text AS id, state, lease_epoch, stop_reason, error FROM worker_runs "
+                "WHERE execution_id=:e ORDER BY created_at",
+                e=execution_id,
+            ),
             "model_executions": q(
                 "SELECT status FROM model_executions WHERE execution_id=:e", e=execution_id
             ),

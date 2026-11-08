@@ -276,3 +276,7 @@ Agy architecture review: no Critical findings; **ACCEPT WITH CHANGES**. Adopted:
 4. Is verification-first (4v before D1 is resolved) the desired order?
 5. Image build authorization and who runs vulnerability scanning (tool availability is unverified).
 6. Docker file-sharing narrowing and Postgres binding: will you perform them?
+
+## 18. Implementation note (2026-11-08, appended; nothing above was rewritten)
+The operator approved the sequence and authorized M1.5-2a only. Where the implementation deliberately differs from sections 6, 10 and 16 (HTTP over a Unix socket instead of length-prefixed JSON, execution-scoped `list_workers`, no `credential_handle`, manifest-only export, `ADMITTED` deferred, signed responses, broker-side epoch fencing), the list is in `V1_5_M1_5_2A_SPEC.md` section 3. Operator decisions recorded: tier A is acceptable for local development only and must never be presented as a security boundary; tier B (separate macOS user) is required before broader or non-loopback use; Docker Desktop file sharing must be narrowed before real worker execution and PostgreSQL should eventually bind to 127.0.0.1:5433, each only after a report of the exact change and its impact (neither has been touched).
+

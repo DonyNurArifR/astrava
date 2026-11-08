@@ -167,3 +167,7 @@ M1.5-6  adversarial acceptance + freeze                     needs 5
 
 ## Amendment A3 (2026-11-08) — M1.5-2 re-scoped (planning only)
 *Appended; nothing above was rewritten.* The operator withdrew approval for giving the API process Docker access. M1.5-2 is re-planned as a privilege-separated **Worker Broker** with a closed typed contract (sub-milestones 2a contract/fake runtime, 2b broker Docker backend, 2c workspace transfer), verification containerization (4v) may precede D1, and the git-bundle import is replaced by tree export. Full text, threat model, contract and revised graph: `V1_5_M1_5_2_ARCHITECTURE_REASSESSMENT.md`. **Not authorized for implementation.**
+
+## Amendment A4 (2026-11-08) — M1.5-2a delivered (2b and 2c not authorized)
+*Appended; nothing above was rewritten.* The operator approved the sequence 2a -> 2b -> 2c (each separately authorized; ADR-028 stays Proposed) and authorized **2a only**. 2a delivers the typed broker contract, a broker with a **fake** backend, the API `WorkerRuntime` interface (broker client + fake runtime), the `worker_runs` migration, recovery integration (workers reconciled before reservations are settled; fail closed) and static guards. No Docker, container, image or credential work exists. Verification isolation (4v) is prioritized ahead of resolving D1; D1 stays blocked and D5 unverified. Spec and amendments to the reassessment: `V1_5_M1_5_2A_SPEC.md`; evidence: `V1_5_M1_5_2A_ACCEPTANCE_REPORT.md`.
+

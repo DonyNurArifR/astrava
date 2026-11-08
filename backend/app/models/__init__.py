@@ -23,6 +23,7 @@ from app.models.memory import (
 from app.models.project import Project, ProjectStatus, StudioType
 from app.models.task import ExecutorType, RiskLevel, Task, TaskStatus
 from app.models.usage import ModelExecution, ModelExecutionStatus
+from app.models.worker_run import WorkerRun, WorkerRunState
 from app.models.workflow import Workflow, WorkflowStatus
 from app.models.workspace import Workspace
 
@@ -32,6 +33,8 @@ __all__ = [
     "TimestampMixin",
     "Agent",
     "Workspace",
+    "WorkerRun",
+    "WorkerRunState",
     "Project",
     "ProjectStatus",
     "StudioType",

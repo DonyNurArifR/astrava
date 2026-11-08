@@ -40,7 +40,9 @@ from app.services.execution_lease import (
 from app.services.project_service import ProjectService
 from app.services.task_service import TaskService
 from app.services.usage_service import UsageService
+from app.services.worker_run_service import WorkerReconcileError, WorkerRunService
 from app.services.workflow_service import WorkflowService
+from app.worker_runtime import WorkerRuntime, WorkerRuntimeError, get_worker_runtime
 from app.workspace import GitWorktreeManager, RepoScanner
 from app.workspace.path_security import (
     ExecutionSetupError,
@@ -501,7 +503,10 @@ class OrchestrationRunner:
 
     @staticmethod
     async def recover_execution(
-        db: AsyncSession, execution_id: uuid.UUID, owner: str | None = None
+        db: AsyncSession,
+        execution_id: uuid.UUID,
+        owner: str | None = None,
+        worker_runtime: WorkerRuntime | None = None,
     ) -> WorkflowExecution:
         """Recover a RUNNING execution whose runner died, from persisted PostgreSQL state.
 
@@ -518,11 +523,14 @@ class OrchestrationRunner:
             return execution
 
         async with _execution_semaphore:
-            return await OrchestrationRunner._recover_locked(db, execution, owner)
+            return await OrchestrationRunner._recover_locked(db, execution, owner, worker_runtime)
 
     @staticmethod
     async def _recover_locked(
-        db: AsyncSession, execution: WorkflowExecution, owner: str | None
+        db: AsyncSession,
+        execution: WorkflowExecution,
+        owner: str | None,
+        worker_runtime: WorkerRuntime | None = None,
     ) -> WorkflowExecution:
         execution_id = execution.id
         owner = owner or new_owner_id("recover")
@@ -536,6 +544,13 @@ class OrchestrationRunner:
         try:
             await db.refresh(execution)
             state: dict[str, Any] = dict(execution.state_data or {})
+
+            # M1.5-2a ordering: stop and clean every stale-epoch worker BEFORE force-settling
+            # reservations, so no live worker consumes a reservation that is being expired. Any
+            # failure blocks recovery (fail closed); the lease is released and the execution stays
+            # RUNNING for a later retry.
+            await OrchestrationRunner._reconcile_workers(db, execution_id, epoch, worker_runtime)
+
             expired = await BudgetGovernor.expire_orphaned_reservations(db, execution_id, epoch)
             await WorkflowService.record_event(
                 db,
@@ -579,6 +594,39 @@ class OrchestrationRunner:
             await OrchestrationRunner._release_lease(execution_id, owner, epoch)
         reloaded = await WorkflowService.get_execution(db, execution_id)
         return reloaded or execution
+
+    @staticmethod
+    async def _reconcile_workers(
+        db: AsyncSession,
+        execution_id: uuid.UUID,
+        epoch: int,
+        runtime: WorkerRuntime | None,
+    ) -> None:
+        owns_runtime = runtime is None
+        try:
+            if runtime is None:
+                try:
+                    runtime = get_worker_runtime()
+                except WorkerRuntimeError as exc:
+                    raise WorkerReconcileError(f"worker runtime misconfigured: {exc}") from exc
+            try:
+                report = await WorkerRunService.reconcile_for_recovery(
+                    db, runtime, execution_id, epoch
+                )
+            except WorkerReconcileError as exc:
+                await OrchestrationRunner._safe_rollback(db)
+                await WorkflowService.record_event(
+                    db, execution_id, "recovery_blocked", {"epoch": epoch, "reason": str(exc)[:300]}
+                )
+                await db.commit()
+                raise
+            await WorkflowService.record_event(
+                db, execution_id, "workers_reconciled", {"epoch": epoch, **report.as_event()}
+            )
+            await db.commit()
+        finally:
+            if owns_runtime and runtime is not None:
+                await runtime.aclose()
 
     @staticmethod
     async def _setup_isolation(

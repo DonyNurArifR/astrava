@@ -1,10 +1,14 @@
 # ASTRAVA Agent State (authoritative recovery snapshot)
 
 **Owner:** Claude orchestrator (`astrava_orchestrator`). Agy writes only between the `AGY-CHECKPOINT` markers in section 13.
-**Schema:** 1 · **Checkpoint:** CP-008 · **Written:** 2026-11-07 +0700 · **Mission:** M1.5-1c accepted; M1.5-2 architecture reassessment
+**Schema:** 1 · **Checkpoint:** CP-009 · **Written:** 2026-11-08 +0700 · **Mission:** M1.5-2a implemented (awaiting operator acceptance); STOP before 2b
 **Checkpoint commit (base):** `28eea99dd6f91066e531119e8b5af8a99d95827a` (M1.5-1c). **Expected HEAD:** that commit, or a docs-only descendant that contains this file (the CP-008 documentation commit, once the operator approves it). Verify with `git log --oneline 28eea99..HEAD` (empty, or only docs/recovery commits). Any product-code change after `28eea99` means this file is STALE: run `AGENT_PROTOCOL.md` section 6.
 
-## 1. Git state (CP-008)
+## 0. CP-009 (latest)
+- **Operator authorized M1.5-2a ONLY** (2026-11-08) after approving the sequence 2a -> 2b -> 2c (each separately authorized; ADR-028 still Proposed). Documentation commit `5cfdea5` pushed first. **M1.5-2a is implemented, uncommitted, awaiting operator acceptance:** `backend/astrava_broker/` (closed nine-op contract, fake backend, UDS HTTP server), `backend/app/worker_runtime/` (interface, broker client, fake runtime), `worker_runs` migration `c8a1f3d5e7b9` (Alembic head), `services/worker_run_service.py`, recovery order claim -> reconcile workers -> expire reservations -> graph (fail closed, `recovery_cli` exit 5). Evidence: 1075 backend tests (834 + 241), ruff/mypy clean, mutation 0 survivors after fixes, Agy ACCEPT WITH CHANGES fixed. Report: `docs/V1_5_M1_5_2A_ACCEPTANCE_REPORT.md`. **No Docker, SDK, container, image, credential, host-setting change.** 2b/2c not authorized. Operator decisions: tier A dev-only never a boundary; tier B before broader use; narrow Docker file sharing and rebind Postgres to 127.0.0.1 only after reporting the exact change (not done); 4v before D1; D1 blocked, D5 unverified.
+- If HEAD is still `5cfdea5` the 2a work is in the working tree only; recover with `git status` and the report above.
+
+## 1. Git state (CP-008, historical)
 - Branch: `main`. Base `28eea99` (M1.5-1c, accepted). CP-008 documentation changes are uncommitted until the operator approves; `origin/main` equals HEAD after the push; tree clean.
 - Product code last changed by `28eea99` (previous: `552165c`, M1.5-1b).
 - Recent history: `28eea99` M1.5-1c · `552165c` M1.5-1b · `a4c1d1e` M1.5-0 · `a55c739` CP-002 · `2fb864b` recovery docs · `02edb00` M1.5-1a · `3623d43` V1.5 planning · `ed08f15` V1.4 freeze (2026-11-07, +0700).
@@ -37,7 +41,7 @@ Source of truth: `docs/V1_5_ROADMAP.md` + Amendment A1 + `docs/V1_5_M1_5_0_DECIS
 |---|---|---|
 | M1.5-0 (reduced), M1.5-1a, **M1.5-1b** | Decision record / operator auth / containment + ownership + fail-closed setup | **Accepted** |
 | **M1.5-1c** | Execution lease/epoch recovery, retry-aware attempts (SD-03, SD-04) | **Accepted with limitations at `28eea99`** (see `docs/V1_5_M1_5_1C_ACCEPTANCE_REPORT.md`) |
-| M1.5-2 | `WorkerRuntime` (Docker initial target), pinned image, `worker_runs`, supervisor | Prerequisite 1a met; **not authorized**; gives the API process Docker access |
+| M1.5-2a / 2b / 2c | Broker contract + fake runtime (2a); broker Docker backend (2b); workspace transfer (2c) | **2a implemented, awaiting acceptance**; 2b and 2c NOT authorized (each needs separate approval; Docker access for the broker only, never the API) |
 | M1.5-3 / 3b | Snapshot + hardened git import / controlled dependency preparation | After 2 (3 also needs 1b, now met); not authorized |
 | M1.5-4a | Credential strategy | **BLOCKED by D1** |
 | M1.5-4 / 5 / 6 | Cutover / integration / acceptance | **Blocked through 4a (D1)** |

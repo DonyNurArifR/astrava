@@ -219,6 +219,55 @@ def install_failpoints() -> None:
     ArtifactService.register_artifact = staticmethod(register)
 
 
+async def worker_side_task() -> None:
+    """Stands in for graph dispatch (M1.5-2b+ wires real dispatch): once the execution is running
+    and owned, ask the broker for workers through the REAL service, under the REAL epoch."""
+    from sqlalchemy import text
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.worker_run_service import WorkerRunService
+    from app.worker_runtime import get_worker_runtime
+    from astrava_broker.profiles import Profile
+
+    side = CFG["worker_side"]
+    async with AsyncSessionLocal() as db:
+        while True:
+            row = (
+                await db.execute(
+                    text(
+                        "SELECT id, run_epoch FROM workflow_executions "
+                        "WHERE project_id = :p AND run_epoch > 0"
+                    ),
+                    {"p": CFG["project_id"]},
+                )
+            ).first()
+            if row:
+                break
+            await db.rollback()
+            await asyncio.sleep(0.1)
+        eid, epoch = row[0], int(row[1])
+        runtime = get_worker_runtime()
+        assert runtime is not None
+        for _i in range(side.get("count", 1)):
+            run = await WorkerRunService.launch(
+                db,
+                runtime,
+                execution_id=eid,
+                epoch=epoch,
+                task_id=uuid.uuid4(),
+                attempt=0,
+                profile=Profile.AGENT_STANDARD,
+                repo_id="repo-one",
+                base_ref="a" * 40,
+                wall_timeout_s=side.get("wall_timeout_s", 600),
+                job=json.dumps({"fake": {"runtime_s": 100000}}),
+            )
+            await WorkerRunService.start(db, runtime, run, epoch)
+        (CTL / "execution_id").write_text(str(eid))
+        marker("workers_started")
+    await hang()
+
+
 async def amain() -> int:
     install_doubles()
     install_failpoints()
@@ -245,10 +294,53 @@ async def amain() -> int:
                 await db.commit()
                 result["project_id"] = str(project.id)
             elif cmd == "start":
+                if CFG.get("worker_side"):
+                    side_task = asyncio.ensure_future(worker_side_task())  # noqa: F841
                 ex = await OrchestrationRunner.start_pipeline(
                     db, uuid.UUID(CFG["project_id"]), CFG.get("objective", "recovery test")
                 )
                 result["status"] = ex.status.value
+            elif cmd == "stale_probe":
+                # A superseded API process (old epoch) tries to create a worker both through the
+                # control-plane service (DB fence) and directly at the broker (broker fence).
+                from app.services.worker_run_service import WorkerRunService
+                from app.worker_runtime import get_worker_runtime
+                from app.worker_runtime.base import (
+                    CreateWorkerRequest,
+                    RuntimeConflictError,
+                    WorkerRef,
+                )
+                from astrava_broker.profiles import ImageAlias, Profile, WorkerKind
+
+                runtime = get_worker_runtime()
+                eid, old = uuid.UUID(CFG["execution_id"]), int(CFG["epoch"])
+                try:
+                    await WorkerRunService.launch(
+                        db, runtime, execution_id=eid, epoch=old, task_id=uuid.uuid4(),
+                        attempt=0, profile=Profile.AGENT_STANDARD, repo_id="repo-one",
+                        base_ref="a" * 40, wall_timeout_s=60, job="{}",
+                    )  # fmt: skip
+                    result["db_fence"] = "NOT FENCED"
+                except StaleWorkerError:
+                    result["db_fence"] = "StaleWorkerError"
+                try:
+                    await runtime.create_worker(
+                        CreateWorkerRequest(
+                            ref=WorkerRef(uuid.uuid4(), eid, old),
+                            task_id=uuid.uuid4(),
+                            attempt=0,
+                            kind=WorkerKind.AGENT,
+                            profile=Profile.AGENT_STANDARD,
+                            image_alias=ImageAlias.AGENT_BASE,
+                            repo_id="repo-one",
+                            base_ref="a" * 40,
+                            wall_timeout_s=60,
+                            job="{}",
+                        )  # fmt: skip
+                    )
+                    result["broker_fence"] = "NOT FENCED"
+                except RuntimeConflictError:
+                    result["broker_fence"] = "RuntimeConflictError"
             elif cmd == "recover":
                 ex = await OrchestrationRunner.recover_execution(db, uuid.UUID(CFG["execution_id"]))
                 result["status"] = ex.status.value
