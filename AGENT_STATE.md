@@ -1,10 +1,16 @@
 # ASTRAVA Agent State (authoritative recovery snapshot)
 
 **Owner:** Claude orchestrator (`astrava_orchestrator`). Agy writes only between the `AGY-CHECKPOINT` markers in section 13.
-**Schema:** 1 · **Checkpoint:** CP-009 · **Written:** 2026-11-08 +0700 · **Mission:** M1.5-2a implemented (awaiting operator acceptance); STOP before 2b
+**Schema:** 1 · **Checkpoint:** CP-010 · **Written:** 2026-11-08 +0700 · **Mission:** M1.5-2a ACCEPTED; 2b preparation proposal delivered; STOP before 2b
 **Checkpoint commit (base):** `28eea99dd6f91066e531119e8b5af8a99d95827a` (M1.5-1c). **Expected HEAD:** that commit, or a docs-only descendant that contains this file (the CP-008 documentation commit, once the operator approves it). Verify with `git log --oneline 28eea99..HEAD` (empty, or only docs/recovery commits). Any product-code change after `28eea99` means this file is STALE: run `AGENT_PROTOCOL.md` section 6.
 
-## 0. CP-009 (latest)
+## 0. CP-010 (latest; CP-009 below is historical and unchanged)
+- **Operator ACCEPTED M1.5-2a** (2026-11-08): commit `f4fd0a30f128f8a1db2b0e032d4eb110f935b5c3`; checkpoint commit `b2b950b`; documentation commit `5cfdea5`. Evidence: 1,075 backend tests passing (0 skips); four process-level scenarios J1-J4; mutation 40 mutants, all killed after 7 initial survivors; Agy ACCEPT WITH CHANGES (fixed). **Open limitations/debt kept:** fake backend only; tier A dev-only and not a boundary, tier B not built; worktree artifact retrieval limit; intermediate-directory TOCTOU; other repo-local Git config; tracked-files-only dirty check; host-side repo parsing/verification; D1 BLOCKED; D5 UNVERIFIED; SD-07; at-least-once provider invocation; Docker file sharing and Postgres `0.0.0.0:5433` UNCHANGED.
+- **2b is NOT authorized.** Preparation only: `docs/V1_5_M1_5_2B_PREPARATION.md` (committed with the CP-010 documentation commit) holds the Docker file-sharing proposal (H1), the Postgres 127.0.0.1 proposal (H2), the 2b plan, gates and required decisions. No Docker contact, host change, source change or dependency was made. Wait for operator decisions.
+
+- **CP-010 update (later same day):** H1 NOT changed (operator; inventory in preparation doc 8.2). **H2 applied**: Postgres now published on `127.0.0.1:5433` (backup + restore-verified, data intact, `docker-compose.yml` change uncommitted pending approval; rollback in preparation doc 8.3). 2b planning refined (preparation doc section 8: image spec, build-time network, dependency design, tier B = dedicated Linux VM/host as a separate infrastructure milestone). **2b still NOT authorized.** The Docker/Postgres facts in section 8 below that say `0.0.0.0:5433` are historical.
+
+## 0a. CP-009 (historical)
 - **Operator authorized M1.5-2a ONLY** (2026-11-08) after approving the sequence 2a -> 2b -> 2c (each separately authorized; ADR-028 still Proposed). Documentation commit `5cfdea5` pushed first. **M1.5-2a is implemented and committed/pushed as `f4fd0a30f128f8a1db2b0e032d4eb110f935b5c3`, awaiting operator acceptance:** `backend/astrava_broker/` (closed nine-op contract, fake backend, UDS HTTP server), `backend/app/worker_runtime/` (interface, broker client, fake runtime), `worker_runs` migration `c8a1f3d5e7b9` (Alembic head), `services/worker_run_service.py`, recovery order claim -> reconcile workers -> expire reservations -> graph (fail closed, `recovery_cli` exit 5). Evidence: 1075 backend tests (834 + 241), ruff/mypy clean, mutation 0 survivors after fixes, Agy ACCEPT WITH CHANGES fixed. Report: `docs/V1_5_M1_5_2A_ACCEPTANCE_REPORT.md`. **No Docker, SDK, container, image, credential, host-setting change.** 2b/2c not authorized. Operator decisions: tier A dev-only never a boundary; tier B before broader use; narrow Docker file sharing and rebind Postgres to 127.0.0.1 only after reporting the exact change (not done); 4v before D1; D1 blocked, D5 unverified.
 - Checkpoint commit: `f4fd0a3` (product code); expected HEAD is that commit or a docs-only descendant.
 
@@ -91,6 +97,7 @@ Other panes in the Herdr session belong to a different project (`zenar_*`); do n
 - Committed: CP-001 `2fb864b`, CP-002 `a55c739`, CP-003 with M1.5-0 `a4c1d1e`. CP-005 (this file and the log) ships inside the M1.5-1b milestone commit by operator authorization of that milestone. After the push the tree is clean; anything `git status` shows later is new work.
 
 ## 12. Next actions (exact)
+- **CP-010:** operator to decide the items in section 7 of `docs/V1_5_M1_5_2B_PREPARATION.md` (H1, H2, image-build network access, base image/scanner, tmpfs workspace, tier B path) and separately authorize M1.5-2b. Claude: STOPPED; do not touch host settings or start 2b.
 - **Operator:** (a) review the M1.5-1c acceptance report; (b) review the M1.5-2 architecture reassessment and approve or amend the proposed implementation sequence; D1 remains blocked, D5 unverified.
 - **Claude orchestrator:** STOPPED after M1.5-1b acceptance. On M1.5-1c authorization: inspect the real runner/graph resume path first, write the spec into this file (CP-006) before delegating, have Agy design-review it, delegate bounded tasks to `astrava_executor`, verify everything locally, request Agy's independent review, then commit/push only after acceptance. Do not start M1.5-2.
 - **Agy:** idle in prompt mode. On request: design-review the M1.5-1c spec, then independent review.
